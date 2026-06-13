@@ -1,36 +1,236 @@
 from datetime import datetime, timedelta
+import random
 
-# 1. Warehouse Selector
+# ─────────────────────────────────────────
+# 1. WAREHOUSE SELECTOR
+# ─────────────────────────────────────────
+
 def select_warehouse(order):
+    """Select the best warehouse based on stock, distance and capacity."""
     warehouses = order.get("available_warehouses", [])
     if not warehouses:
-        return None
-    return min(warehouses, key=lambda w: w["distance"])
+        return {"error": "No warehouses available"}
 
-# 2. Dispatch Limit Check
+    # Filter only warehouses that have the item in stock
+    stocked = [w for w in warehouses if w.get("has_stock", False)]
+    if not stocked:
+        return {"error": "Item out of stock in all warehouses"}
+
+    # Pick closest warehouse with stock
+    best = min(stocked, key=lambda w: w["distance"])
+    return {
+        "warehouse_id": best["id"],
+        "warehouse_name": best["name"],
+        "distance_km": best["distance"],
+        "estimated_dispatch": "Within 2 hours"
+    }
+
+
+# ─────────────────────────────────────────
+# 2. DISPATCH LIMIT CHECK
+# ─────────────────────────────────────────
+
 def check_dispatch_limit(warehouse):
-    return warehouse["dispatched_today"] < warehouse["daily_limit"]
+    """Check if warehouse has not exceeded its daily dispatch limit."""
+    dispatched = warehouse.get("dispatched_today", 0)
+    limit = warehouse.get("daily_limit", 100)
+    remaining = limit - dispatched
 
-# 3. VIP Priority Logic
+    if dispatched >= limit:
+        return {
+            "allowed": False,
+            "reason": "Daily dispatch limit reached",
+            "dispatched_today": dispatched,
+            "daily_limit": limit,
+            "remaining_capacity": 0
+        }
+    return {
+        "allowed": True,
+        "dispatched_today": dispatched,
+        "daily_limit": limit,
+        "remaining_capacity": remaining
+    }
+
+
+# ─────────────────────────────────────────
+# 3. VIP PRIORITY LOGIC
+# ─────────────────────────────────────────
+
+VIP_TIERS = {
+    "VIP": {"priority": 1, "discount": 20, "express": True},
+    "PREMIUM": {"priority": 2, "discount": 10, "express": True},
+    "REGULAR": {"priority": 5, "discount": 0, "express": False},
+}
+
 def is_vip(customer):
     return customer.get("tier") == "VIP"
 
 def get_priority(customer):
-    return 1 if is_vip(customer) else 5
+    tier = customer.get("tier", "REGULAR")
+    return VIP_TIERS.get(tier, VIP_TIERS["REGULAR"])
 
-# 4. Wait Time Calculator
+def apply_vip_benefits(order):
+    """Apply VIP benefits to an order."""
+    customer = order.get("customer", {})
+    tier = customer.get("tier", "REGULAR")
+    benefits = VIP_TIERS.get(tier, VIP_TIERS["REGULAR"])
+    original_price = order.get("total_price", 0)
+    discount_amount = (benefits["discount"] / 100) * original_price
+
+    return {
+        "customer_tier": tier,
+        "priority_level": benefits["priority"],
+        "express_shipping": benefits["express"],
+        "discount_percent": benefits["discount"],
+        "discount_amount": round(discount_amount, 2),
+        "final_price": round(original_price - discount_amount, 2)
+    }
+
+
+# ─────────────────────────────────────────
+# 4. WAIT TIME CALCULATOR
+# ─────────────────────────────────────────
+
 def calculate_wait_time(order):
-    base_time = 30  # minutes
-    if is_vip(order.get("customer", {})):
-        return base_time // 2
-    return base_time
+    """Calculate estimated wait time based on priority, distance and time of day."""
+    customer = order.get("customer", {})
+    tier = customer.get("tier", "REGULAR")
+    distance = order.get("distance_km", 10)
+    current_hour = datetime.now().hour
 
-# 5. Restock Date Logic
+    # Base time in minutes
+    base_time = 30
+
+    # Priority reduction
+    if tier == "VIP":
+        base_time = 15
+    elif tier == "PREMIUM":
+        base_time = 20
+
+    # Distance factor (2 min per km)
+    travel_time = distance * 2
+
+    # Peak hour surcharge (9am-12pm and 5pm-8pm)
+    peak_surcharge = 0
+    if 9 <= current_hour <= 12 or 17 <= current_hour <= 20:
+        peak_surcharge = 15
+
+    total_time = base_time + travel_time + peak_surcharge
+    eta = datetime.now() + timedelta(minutes=total_time)
+
+    return {
+        "base_time_minutes": base_time,
+        "travel_time_minutes": travel_time,
+        "peak_hour_surcharge": peak_surcharge,
+        "total_wait_minutes": total_time,
+        "estimated_arrival": eta.strftime("%Y-%m-%d %H:%M"),
+        "is_peak_hour": peak_surcharge > 0
+    }
+
+
+# ─────────────────────────────────────────
+# 5. RESTOCK DATE LOGIC
+# ─────────────────────────────────────────
+
+RESTOCK_SCHEDULE = {
+    "electronics": 3,
+    "clothing": 5,
+    "food": 1,
+    "furniture": 14,
+    "default": 7
+}
+
 def get_restock_date(item):
+    """Calculate restock date based on item category and stock level."""
     if item.get("in_stock"):
-        return "Available now"
-    days = item.get("restock_days", 7)
-    restock = datetime.today() + timedelta(days=days)
-    return restock.strftime("%Y-%m-%d")
+        return {
+            "status": "In Stock",
+            "available": True,
+            "restock_date": None,
+            "stock_level": item.get("stock_level", "Unknown")
+        }
 
-    
+    category = item.get("category", "default").lower()
+    days = item.get("restock_days") or RESTOCK_SCHEDULE.get(category, RESTOCK_SCHEDULE["default"])
+    restock_date = datetime.today() + timedelta(days=days)
+
+    return {
+        "status": "Out of Stock",
+        "available": False,
+        "restock_date": restock_date.strftime("%Y-%m-%d"),
+        "days_until_restock": days,
+        "category": category
+    }
+
+
+# ─────────────────────────────────────────
+# MAIN DISPATCH HANDLER
+# ─────────────────────────────────────────
+
+def process_dispatch(order):
+    """Main function that processes a full dispatch request."""
+    print("\n===== DISPATCH ENGINE PROCESSING =====")
+
+    # Step 1: Select warehouse
+    warehouse_result = select_warehouse(order)
+    print(f"Warehouse: {warehouse_result}")
+
+    # Step 2: Check dispatch limit
+    warehouse = order.get("available_warehouses", [{}])[0]
+    limit_result = check_dispatch_limit(warehouse)
+    print(f"Dispatch Limit: {limit_result}")
+
+    if not limit_result["allowed"]:
+        return {"status": "REJECTED", "reason": limit_result["reason"]}
+
+    # Step 3: Apply VIP benefits
+    vip_result = apply_vip_benefits(order)
+    print(f"VIP Benefits: {vip_result}")
+
+    # Step 4: Calculate wait time
+    wait_result = calculate_wait_time(order)
+    print(f"Wait Time: {wait_result}")
+
+    # Step 5: Check restock if needed
+    item = order.get("item", {})
+    restock_result = get_restock_date(item)
+    print(f"Restock Info: {restock_result}")
+
+    return {
+        "status": "APPROVED",
+        "warehouse": warehouse_result,
+        "dispatch_limit": limit_result,
+        "vip_info": vip_result,
+        "wait_time": wait_result,
+        "restock_info": restock_result
+    }
+
+
+# ─────────────────────────────────────────
+# TEST
+# ─────────────────────────────────────────
+
+if __name__ == "__main__":
+    sample_order = {
+        "order_id": "ORD-1001",
+        "total_price": 500,
+        "distance_km": 8,
+        "customer": {
+            "name": "Kushal Tiwari",
+            "tier": "VIP"
+        },
+        "item": {
+            "name": "Laptop",
+            "category": "electronics",
+            "in_stock": False,
+            "stock_level": 0
+        },
+        "available_warehouses": [
+            {"id": "WH1", "name": "Delhi North", "distance": 8, "has_stock": True, "dispatched_today": 45, "daily_limit": 100},
+            {"id": "WH2", "name": "Delhi South", "distance": 15, "has_stock": True, "dispatched_today": 98, "daily_limit": 100},
+        ]
+    }
+
+    result = process_dispatch(sample_order)
+    print("\n===== FINAL RESULT =====")
+    print(result)
