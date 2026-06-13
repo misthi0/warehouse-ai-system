@@ -15,7 +15,6 @@ def select_warehouse(order):
     if not stocked:
         return {"error": "Item out of stock in all warehouses"}
 
-    # Safe handling of missing fields + prefer closer distance AND more capacity
     best = min(
         stocked,
         key=lambda w: (
@@ -27,8 +26,7 @@ def select_warehouse(order):
         "warehouse_id": best["id"],
         "warehouse_name": best["name"],
         "distance_km": best.get("distance", 0),
-        "estimated_dispatch": "Within 2 hours",
-        "_selected": best
+        "estimated_dispatch": "Within 2 hours"
     }
 
 
@@ -171,7 +169,7 @@ def get_restock_date(item):
 def process_dispatch(order):
     """Main function that processes a full dispatch request."""
 
-    # Fix 2: reject negative values
+    # Reject negative price
     if order.get("total_price", 0) < 0:
         return {"status": "REJECTED", "reason": "Invalid order price"}
 
@@ -181,7 +179,7 @@ def process_dispatch(order):
     if "error" in warehouse_result:
         return {"status": "REJECTED", "reason": warehouse_result["error"]}
 
-    # Step 2: check limit on the SELECTED warehouse
+    # Step 2: Check limit on the SELECTED warehouse
     selected_id = warehouse_result["warehouse_id"]
     selected_warehouse = next(
         w for w in order["available_warehouses"]
@@ -195,16 +193,15 @@ def process_dispatch(order):
     # Step 3: Apply VIP benefits
     vip_result = apply_vip_benefits(order)
 
-    # Step 4: Fix 3 - use selected warehouse distance for accurate ETA
-    order["distance_km"] = warehouse_result["distance_km"]
-    wait_result = calculate_wait_time(order)
+    # Step 4: Use selected warehouse distance for accurate ETA
+    wait_result = calculate_wait_time({
+        **order,
+        "distance_km": warehouse_result["distance_km"]
+    })
 
     # Step 5: Check restock
     item = order.get("item", {})
     restock_result = get_restock_date(item)
-
-    # Remove internal key before returning
-    warehouse_result.pop("_selected", None)
 
     return {
         "status": "APPROVED",
