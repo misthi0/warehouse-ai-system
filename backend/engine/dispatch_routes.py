@@ -1,15 +1,28 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, validator
 from datetime import datetime, timedelta
 
 router = APIRouter()
 
 
+# ── Input Models ──
 class OrderRequest(BaseModel):
     customer_name: str
     product_id: int
     quantity: int
     is_vip: bool = False
+
+    @validator("quantity")
+    def quantity_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError("Quantity must be greater than 0")
+        return v
+
+    @validator("customer_name")
+    def name_must_not_be_empty(cls, v):
+        if not v.strip():
+            raise ValueError("Customer name cannot be empty")
+        return v
 
 
 class WarehouseInventory(BaseModel):
@@ -21,37 +34,56 @@ class WarehouseInventory(BaseModel):
     restock_date: str
 
 
+# ── 1. Warehouse Selector ──
 def select_warehouse(warehouses, quantity):
+    """Select warehouse with enough stock and most remaining dispatch capacity."""
     eligible = [
         w for w in warehouses
         if w["available_quantity"] >= quantity
         and w["dispatched_today"] < w["dispatch_limit"]
+        and (w["dispatch_limit"] - w["dispatched_today"]) >= quantity
     ]
     if not eligible:
         return None
-    return min(eligible, key=lambda w: w["dispatched_today"])
+    # Pick warehouse with most remaining capacity
+    return max(eligible, key=lambda w: w["dispatch_limit"] - w["dispatched_today"])
 
 
+# ── 2. Dispatch Limit Check ──
 def check_dispatch_limit(warehouse, quantity):
+    """Check if warehouse can handle the requested quantity."""
     remaining = warehouse["dispatch_limit"] - warehouse["dispatched_today"]
     return remaining >= quantity
 
 
+# ── 3. VIP Priority ──
 def apply_vip_priority(warehouses, is_vip):
+    """VIP orders get warehouses sorted by most available capacity first."""
     if is_vip:
-        return sorted(warehouses, key=lambda w: w["dispatched_today"])
+        return sorted(
+            warehouses,
+            key=lambda w: w["dispatch_limit"] - w["dispatched_today"],
+            reverse=True
+        )
     return warehouses
 
 
+# ── 4. Wait Time Calculator ──
 def calculate_wait_time(restock_date: str):
-    restock = datetime.strptime(restock_date, "%Y-%m-%d")
-    today = datetime.today()
-    delta = (restock - today).days
-    return max(delta, 0)
+    """Calculate days until restock."""
+    try:
+        restock = datetime.strptime(restock_date, "%Y-%m-%d")
+        today = datetime.today()
+        delta = (restock - today).days
+        return max(delta, 0)
+    except ValueError:
+        return 0
 
 
+# ── 5. Restock Date Logic ──
 def get_restock_info(warehouses):
-    dates = [w["restock_date"] for w in warehouses if w["restock_date"]]
+    """Get earliest restock date across all warehouses."""
+    dates = [w["restock_date"] for w in warehouses if w.get("restock_date")]
     if not dates:
         return None
     earliest = min(dates)
@@ -59,8 +91,15 @@ def get_restock_info(warehouses):
     return {"restock_date": earliest, "wait_days": wait_days}
 
 
+# ── Main Dispatch Endpoint ──
 @router.post("/api/dispatch")
 def dispatch_order(order: OrderRequest):
+    """
+    Main dispatch endpoint.
+    Selects best warehouse based on stock, dispatch limit and VIP priority.
+    """
+
+    # Simulated warehouse data (will be replaced by Misthi's DB queries)
     warehouses = [
         {
             "warehouse_id": 1,
@@ -91,8 +130,16 @@ def dispatch_order(order: OrderRequest):
         },
     ]
 
+    # Step 1: Apply VIP priority sorting
     sorted_warehouses = apply_vip_priority(warehouses, order.is_vip)
+
+    # Step 2: Select best warehouse
     best = select_warehouse(sorted_warehouses, order.quantity)
+
+    # Step 3: Double check dispatch limit on selected warehouse
+    if best:
+        if not check_dispatch_limit(best, order.quantity):
+            best = None
 
     if best:
         return {
@@ -107,6 +154,11 @@ def dispatch_order(order: OrderRequest):
         }
     else:
         restock = get_restock_info(warehouses)
+        if not restock:
+            raise HTTPException(
+                status_code=503,
+                detail="No warehouses available and no restock date found."
+            )
         return {
             "status": "PENDING",
             "customer_name": order.customer_name,
