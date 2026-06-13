@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-import random
 
 # ─────────────────────────────────────────
 # 1. WAREHOUSE SELECTOR
@@ -11,18 +10,24 @@ def select_warehouse(order):
     if not warehouses:
         return {"error": "No warehouses available"}
 
-    # Filter only warehouses that have the item in stock
     stocked = [w for w in warehouses if w.get("has_stock", False)]
     if not stocked:
         return {"error": "Item out of stock in all warehouses"}
 
-    # Pick closest warehouse with stock
-    best = min(stocked, key=lambda w: w["distance"])
+    # Fix: prefer closer distance AND more remaining capacity
+    best = min(
+        stocked,
+        key=lambda w: (
+            w["distance"],
+            -(w["daily_limit"] - w["dispatched_today"])
+        )
+    )
     return {
         "warehouse_id": best["id"],
         "warehouse_name": best["name"],
         "distance_km": best["distance"],
-        "estimated_dispatch": "Within 2 hours"
+        "estimated_dispatch": "Within 2 hours",
+        "_selected": best  # internal use for limit check
     }
 
 
@@ -98,19 +103,14 @@ def calculate_wait_time(order):
     distance = order.get("distance_km", 10)
     current_hour = datetime.now().hour
 
-    # Base time in minutes
     base_time = 30
-
-    # Priority reduction
     if tier == "VIP":
         base_time = 15
     elif tier == "PREMIUM":
         base_time = 20
 
-    # Distance factor (2 min per km)
     travel_time = distance * 2
 
-    # Peak hour surcharge (9am-12pm and 5pm-8pm)
     peak_surcharge = 0
     if 9 <= current_hour <= 12 or 17 <= current_hour <= 20:
         peak_surcharge = 15
@@ -169,32 +169,36 @@ def get_restock_date(item):
 
 def process_dispatch(order):
     """Main function that processes a full dispatch request."""
-    print("\n===== DISPATCH ENGINE PROCESSING =====")
 
     # Step 1: Select warehouse
     warehouse_result = select_warehouse(order)
-    print(f"Warehouse: {warehouse_result}")
 
-    # Step 2: Check dispatch limit
-    warehouse = order.get("available_warehouses", [{}])[0]
-    limit_result = check_dispatch_limit(warehouse)
-    print(f"Dispatch Limit: {limit_result}")
+    if "error" in warehouse_result:
+        return {"status": "REJECTED", "reason": warehouse_result["error"]}
+
+    # Step 2: Fix - check limit on the SELECTED warehouse, not the first one
+    selected_id = warehouse_result["warehouse_id"]
+    selected_warehouse = next(
+        w for w in order["available_warehouses"]
+        if w["id"] == selected_id
+    )
+    limit_result = check_dispatch_limit(selected_warehouse)
 
     if not limit_result["allowed"]:
         return {"status": "REJECTED", "reason": limit_result["reason"]}
 
     # Step 3: Apply VIP benefits
     vip_result = apply_vip_benefits(order)
-    print(f"VIP Benefits: {vip_result}")
 
     # Step 4: Calculate wait time
     wait_result = calculate_wait_time(order)
-    print(f"Wait Time: {wait_result}")
 
-    # Step 5: Check restock if needed
+    # Step 5: Check restock
     item = order.get("item", {})
     restock_result = get_restock_date(item)
-    print(f"Restock Info: {restock_result}")
+
+    # Remove internal key before returning
+    warehouse_result.pop("_selected", None)
 
     return {
         "status": "APPROVED",
