@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+
 # ─────────────────────────────────────────
 # 1. WAREHOUSE SELECTOR
 # ─────────────────────────────────────────
@@ -14,20 +15,20 @@ def select_warehouse(order):
     if not stocked:
         return {"error": "Item out of stock in all warehouses"}
 
-    # Fix: prefer closer distance AND more remaining capacity
+    # Safe handling of missing fields + prefer closer distance AND more capacity
     best = min(
         stocked,
         key=lambda w: (
-            w["distance"],
-            -(w["daily_limit"] - w["dispatched_today"])
+            w.get("distance", float("inf")),
+            -(w.get("daily_limit", 0) - w.get("dispatched_today", 0))
         )
     )
     return {
         "warehouse_id": best["id"],
         "warehouse_name": best["name"],
-        "distance_km": best["distance"],
+        "distance_km": best.get("distance", 0),
         "estimated_dispatch": "Within 2 hours",
-        "_selected": best  # internal use for limit check
+        "_selected": best
     }
 
 
@@ -170,13 +171,17 @@ def get_restock_date(item):
 def process_dispatch(order):
     """Main function that processes a full dispatch request."""
 
+    # Fix 2: reject negative values
+    if order.get("total_price", 0) < 0:
+        return {"status": "REJECTED", "reason": "Invalid order price"}
+
     # Step 1: Select warehouse
     warehouse_result = select_warehouse(order)
 
     if "error" in warehouse_result:
         return {"status": "REJECTED", "reason": warehouse_result["error"]}
 
-    # Step 2: Fix - check limit on the SELECTED warehouse, not the first one
+    # Step 2: check limit on the SELECTED warehouse
     selected_id = warehouse_result["warehouse_id"]
     selected_warehouse = next(
         w for w in order["available_warehouses"]
@@ -190,7 +195,8 @@ def process_dispatch(order):
     # Step 3: Apply VIP benefits
     vip_result = apply_vip_benefits(order)
 
-    # Step 4: Calculate wait time
+    # Step 4: Fix 3 - use selected warehouse distance for accurate ETA
+    order["distance_km"] = warehouse_result["distance_km"]
     wait_result = calculate_wait_time(order)
 
     # Step 5: Check restock
