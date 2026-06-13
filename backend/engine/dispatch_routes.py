@@ -2,14 +2,18 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, validator
 from datetime import datetime
 from typing import Optional
+from enum import Enum
 import logging
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
 # ── Constants ──
-APPROVED = "APPROVED"
-PENDING = "PENDING"
+class DispatchStatus(str, Enum):
+    APPROVED = "APPROVED"
+    PENDING = "PENDING"
+
 
 # ── Input Models ──
 class OrderRequest(BaseModel):
@@ -33,7 +37,7 @@ class OrderRequest(BaseModel):
 
 # ── Response Model ──
 class DispatchResponse(BaseModel):
-    status: str
+    status: DispatchStatus
     customer_name: str
     product_id: int
     quantity: int
@@ -80,9 +84,14 @@ def get_warehouses(product_id: int) -> list[dict]:
 # ── 1. Warehouse Selector ──
 def select_warehouse(
     warehouses: list[dict],
-    quantity: int
+    quantity: int,
+    is_vip: bool = False
 ) -> dict | None:
-    """Select warehouse with enough stock and most remaining dispatch capacity."""
+    """
+    Select warehouse based on stock and dispatch capacity.
+    Both VIP and regular get warehouse with most remaining capacity.
+    VIP customers get additional benefits like express dispatch.
+    """
     eligible = [
         w for w in warehouses
         if w["available_quantity"] >= quantity
@@ -91,6 +100,7 @@ def select_warehouse(
     ]
     if not eligible:
         return None
+    # Both VIP and regular get warehouse with most remaining capacity
     return max(eligible, key=lambda w: w["dispatch_limit"] - w["dispatched_today"])
 
 
@@ -104,22 +114,7 @@ def check_dispatch_limit(
     return remaining >= quantity
 
 
-# ── 3. VIP Priority ──
-def apply_vip_priority(
-    warehouses: list[dict],
-    is_vip: bool
-) -> list[dict]:
-    """VIP orders get warehouses sorted by most available capacity first."""
-    if is_vip:
-        return sorted(
-            warehouses,
-            key=lambda w: w["dispatch_limit"] - w["dispatched_today"],
-            reverse=True
-        )
-    return warehouses
-
-
-# ── 4. Wait Time Calculator ──
+# ── 3. Wait Time Calculator ──
 def calculate_wait_time(restock_date: str) -> int:
     """Calculate days until restock."""
     try:
@@ -131,7 +126,7 @@ def calculate_wait_time(restock_date: str) -> int:
         return 0
 
 
-# ── 5. Restock Date Logic ──
+# ── 4. Restock Date Logic ──
 def get_restock_info(warehouses: list[dict]) -> dict | None:
     """Get earliest restock date across all warehouses."""
     dates = [w["restock_date"] for w in warehouses if w.get("restock_date")]
@@ -147,17 +142,30 @@ def get_restock_info(warehouses: list[dict]) -> dict | None:
 def dispatch_order(order: OrderRequest) -> DispatchResponse:
     """
     Main dispatch endpoint.
-    Selects best warehouse based on stock, dispatch limit and VIP priority.
+    Selects best warehouse based on stock and dispatch capacity.
+    VIP orders get express dispatch benefit.
     """
     warehouses = get_warehouses(order.product_id)
 
-    sorted_warehouses = apply_vip_priority(warehouses, order.is_vip)
-    best = select_warehouse(sorted_warehouses, order.quantity)
+    # Select best warehouse
+    best = select_warehouse(warehouses, order.quantity, order.is_vip)
 
-    if best and check_dispatch_limit(best, order.quantity):
-        logger.info(f"Order APPROVED for product {order.product_id} → Warehouse {best['warehouse_id']}")
+    # Double check dispatch limit
+    if best and not check_dispatch_limit(best, order.quantity):
+        best = None
+
+    if best:
+        logger.info(
+            "Order approved",
+            extra={
+                "product_id": order.product_id,
+                "warehouse_id": best["warehouse_id"],
+                "customer": order.customer_name,
+                "is_vip": order.is_vip
+            }
+        )
         return DispatchResponse(
-            status=APPROVED,
+            status=DispatchStatus.APPROVED,
             customer_name=order.customer_name,
             product_id=order.product_id,
             quantity=order.quantity,
@@ -173,9 +181,16 @@ def dispatch_order(order: OrderRequest) -> DispatchResponse:
                 status_code=503,
                 detail="No warehouses available and no restock date found."
             )
-        logger.warning(f"Order PENDING for product {order.product_id}. Restock in {restock['wait_days']} days.")
+        logger.warning(
+            "Order pending",
+            extra={
+                "product_id": order.product_id,
+                "customer": order.customer_name,
+                "wait_days": restock["wait_days"]
+            }
+        )
         return DispatchResponse(
-            status=PENDING,
+            status=DispatchStatus.PENDING,
             customer_name=order.customer_name,
             product_id=order.product_id,
             quantity=order.quantity,
