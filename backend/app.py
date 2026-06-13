@@ -4,6 +4,14 @@ from backend.api.routes import router
 from backend.models.database import engine
 from backend.models import models
 
+# Import Khushal's dispatch engine
+try:
+    from backend.engine.dispatch_routes import router as dispatch_router
+    dispatch_available = True
+except ImportError as e:
+    print(f"⚠️ Dispatch engine not found: {e}")
+    dispatch_available = False
+
 # Create all tables automatically
 models.Base.metadata.create_all(bind=engine)
 
@@ -23,12 +31,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connect all routes
+# Connect your routes
 app.include_router(router, prefix="/api")
+
+# Connect Khushal's dispatch engine
+# Note: his router already has /api/dispatch prefix inside
+if dispatch_available:
+    app.include_router(dispatch_router)
+    print("✅ Dispatch engine connected!")
 
 @app.get("/")
 def home():
     return {
         "message": "Warehouse AI System is running!",
-        "docs": "Visit /docs to see all APIs"
+        "docs": "Visit /docs to see all APIs",
+        "dispatch_engine": dispatch_available
     }
