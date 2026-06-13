@@ -5,6 +5,9 @@ from typing import Optional
 from enum import Enum
 import logging
 
+from backend.models.database import SessionLocal
+from backend.models.models import Inventory, Warehouse
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -48,37 +51,42 @@ class DispatchResponse(BaseModel):
     message: Optional[str] = None
 
 
-# ── Mock Data (will be replaced by Misthi's DB) ──
+# ── Database Warehouse Loader ──
 def get_warehouses(product_id: int) -> list[dict]:
-    return [
-        {
-            "warehouse_id": 1,
-            "name": "Warehouse 1",
-            "product_id": product_id,
-            "available_quantity": 100,
-            "dispatch_limit": 50,
-            "dispatched_today": 20,
-            "restock_date": "2026-06-20"
-        },
-        {
-            "warehouse_id": 2,
-            "name": "Warehouse 2",
-            "product_id": product_id,
-            "available_quantity": 200,
-            "dispatch_limit": 80,
-            "dispatched_today": 79,
-            "restock_date": "2026-06-18"
-        },
-        {
-            "warehouse_id": 3,
-            "name": "Warehouse 3",
-            "product_id": product_id,
-            "available_quantity": 0,
-            "dispatch_limit": 60,
-            "dispatched_today": 10,
-            "restock_date": "2026-06-22"
-        },
-    ]
+    db = SessionLocal()
+
+    try:
+        results = (
+            db.query(Inventory, Warehouse)
+            .join(
+                Warehouse,
+                Inventory.warehouse_id == Warehouse.id
+            )
+            .filter(
+                Inventory.product_id == product_id
+            )
+            .all()
+        )
+
+        warehouses = []
+
+        for inv, wh in results:
+            warehouses.append(
+                {
+                    "warehouse_id": wh.id,
+                    "name": wh.name,
+                    "product_id": inv.product_id,
+                    "available_quantity": inv.available_quantity,
+                    "dispatch_limit": inv.dispatch_limit,
+                    "dispatched_today": inv.dispatched_today,
+                    "restock_date": str(inv.restock_date)
+                }
+            )
+
+        return warehouses
+
+    finally:
+        db.close()
 
 
 # ── 1. Warehouse Selector ──
@@ -92,16 +100,21 @@ def select_warehouse(
     Both VIP and regular get warehouse with most remaining capacity.
     VIP customers get additional benefits like express dispatch.
     """
+
     eligible = [
         w for w in warehouses
         if w["available_quantity"] >= quantity
         and w["dispatched_today"] < w["dispatch_limit"]
         and (w["dispatch_limit"] - w["dispatched_today"]) >= quantity
     ]
+
     if not eligible:
         return None
-    # Both VIP and regular get warehouse with most remaining capacity
-    return max(eligible, key=lambda w: w["dispatch_limit"] - w["dispatched_today"])
+
+    return max(
+        eligible,
+        key=lambda w: w["dispatch_limit"] - w["dispatched_today"]
+    )
 
 
 # ── 2. Dispatch Limit Check ──
@@ -109,52 +122,90 @@ def check_dispatch_limit(
     warehouse: dict,
     quantity: int
 ) -> bool:
-    """Check if warehouse can handle the requested quantity."""
-    remaining = warehouse["dispatch_limit"] - warehouse["dispatched_today"]
+    remaining = (
+        warehouse["dispatch_limit"]
+        - warehouse["dispatched_today"]
+    )
     return remaining >= quantity
 
 
 # ── 3. Wait Time Calculator ──
 def calculate_wait_time(restock_date: str) -> int:
-    """Calculate days until restock."""
     try:
-        restock = datetime.strptime(restock_date, "%Y-%m-%d")
+        restock = datetime.strptime(
+            restock_date,
+            "%Y-%m-%d"
+        )
+
         today = datetime.today()
+
         delta = (restock - today).days
+
         return max(delta, 0)
+
     except ValueError:
         return 0
 
 
 # ── 4. Restock Date Logic ──
-def get_restock_info(warehouses: list[dict]) -> dict | None:
-    """Get earliest restock date across all warehouses."""
-    dates = [w["restock_date"] for w in warehouses if w.get("restock_date")]
+def get_restock_info(
+    warehouses: list[dict]
+) -> dict | None:
+
+    dates = [
+        w["restock_date"]
+        for w in warehouses
+        if w.get("restock_date")
+    ]
+
     if not dates:
         return None
+
     earliest = min(dates)
-    wait_days = calculate_wait_time(earliest)
-    return {"restock_date": earliest, "wait_days": wait_days}
+
+    wait_days = calculate_wait_time(
+        earliest
+    )
+
+    return {
+        "restock_date": earliest,
+        "wait_days": wait_days
+    }
 
 
 # ── Main Dispatch Endpoint ──
-@router.post("/api/dispatch", response_model=DispatchResponse)
-def dispatch_order(order: OrderRequest) -> DispatchResponse:
-    """
-    Main dispatch endpoint.
-    Selects best warehouse based on stock and dispatch capacity.
-    VIP orders get express dispatch benefit.
-    """
-    warehouses = get_warehouses(order.product_id)
+@router.post(
+    "/api/dispatch",
+    response_model=DispatchResponse
+)
+def dispatch_order(
+    order: OrderRequest
+) -> DispatchResponse:
 
-    # Select best warehouse
-    best = select_warehouse(warehouses, order.quantity, order.is_vip)
+    warehouses = get_warehouses(
+        order.product_id
+    )
 
-    # Double check dispatch limit
-    if best and not check_dispatch_limit(best, order.quantity):
+    if not warehouses:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found in inventory"
+        )
+
+    best = select_warehouse(
+        warehouses,
+        order.quantity,
+        order.is_vip
+    )
+
+    if best and not check_dispatch_limit(
+        best,
+        order.quantity
+    ):
         best = None
 
     if best:
+
         logger.info(
             "Order approved",
             extra={
@@ -164,6 +215,7 @@ def dispatch_order(order: OrderRequest) -> DispatchResponse:
                 "is_vip": order.is_vip
             }
         )
+
         return DispatchResponse(
             status=DispatchStatus.APPROVED,
             customer_name=order.customer_name,
@@ -172,30 +224,43 @@ def dispatch_order(order: OrderRequest) -> DispatchResponse:
             is_vip=order.is_vip,
             warehouse_id=best["warehouse_id"],
             warehouse_name=best["name"],
-            estimated_dispatch_date=datetime.today().strftime("%Y-%m-%d")
-        )
-    else:
-        restock = get_restock_info(warehouses)
-        if not restock:
-            raise HTTPException(
-                status_code=503,
-                detail="No warehouses available and no restock date found."
+            estimated_dispatch_date=datetime.today().strftime(
+                "%Y-%m-%d"
             )
-        logger.warning(
-            "Order pending",
-            extra={
-                "product_id": order.product_id,
-                "customer": order.customer_name,
-                "wait_days": restock["wait_days"]
-            }
         )
-        return DispatchResponse(
-            status=DispatchStatus.PENDING,
-            customer_name=order.customer_name,
-            product_id=order.product_id,
-            quantity=order.quantity,
-            is_vip=order.is_vip,
-            warehouse_id=None,
-            message=f"Product unavailable. Expected dispatch after {restock['wait_days']} days.",
-            estimated_dispatch_date=restock["restock_date"]
+
+    restock = get_restock_info(
+        warehouses
+    )
+
+    if not restock:
+        raise HTTPException(
+            status_code=503,
+            detail="No warehouses available and no restock date found."
         )
+
+    logger.warning(
+        "Order pending",
+        extra={
+            "product_id": order.product_id,
+            "customer": order.customer_name,
+            "wait_days": restock["wait_days"]
+        }
+    )
+
+    return DispatchResponse(
+        status=DispatchStatus.PENDING,
+        customer_name=order.customer_name,
+        product_id=order.product_id,
+        quantity=order.quantity,
+        is_vip=order.is_vip,
+        warehouse_id=None,
+        message=(
+            f"Product unavailable. "
+            f"Expected dispatch after "
+            f"{restock['wait_days']} days."
+        ),
+        estimated_dispatch_date=restock[
+            "restock_date"
+        ]
+    )
