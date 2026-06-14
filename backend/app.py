@@ -12,6 +12,14 @@ except ImportError as e:
     print(f"⚠️ Dispatch engine not found: {e}")
     dispatch_available = False
 
+# Import PDF upload router
+try:
+    from backend.api.pdf_upload import router as pdf_router
+    pdf_available = True
+except ImportError as e:
+    print(f"⚠️ PDF upload not found: {e}")
+    pdf_available = False
+
 # Create all tables automatically
 models.Base.metadata.create_all(bind=engine)
 
@@ -35,15 +43,20 @@ app.add_middleware(
 app.include_router(router, prefix="/api")
 
 # Connect Khushal's dispatch engine
-# Note: his router already has /api/dispatch prefix inside
 if dispatch_available:
     app.include_router(dispatch_router)
     print("✅ Dispatch engine connected!")
+
+# Connect PDF upload
+if pdf_available:
+    app.include_router(pdf_router, prefix="/api")
+    print("✅ PDF upload connected!")
 
 @app.get("/")
 def home():
     return {
         "message": "Warehouse AI System is running!",
         "docs": "Visit /docs to see all APIs",
-        "dispatch_engine": dispatch_available
+        "dispatch_engine": dispatch_available,
+        "pdf_upload": pdf_available
     }
