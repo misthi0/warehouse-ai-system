@@ -1,36 +1,36 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.api.routes import router
-from backend.models.database import engine
-from backend.models import models
 
-# Import Khushal's dispatch engine
+from api.routes import router
+from models.database import engine
+from models import models
+
+# Dispatch Engine
 try:
-    from backend.engine.dispatch_routes import router as dispatch_router
+    from engine.dispatch_routes import router as dispatch_router
     dispatch_available = True
 except ImportError as e:
     print(f"⚠️ Dispatch engine not found: {e}")
     dispatch_available = False
 
-# Import PDF upload router
+# PDF Upload
 try:
-    from backend.api.pdf_upload import router as pdf_router
+    from api.pdf_upload import router as pdf_router
     pdf_available = True
 except ImportError as e:
     print(f"⚠️ PDF upload not found: {e}")
     pdf_available = False
 
-# Create all tables automatically
+# Create DB Tables
 models.Base.metadata.create_all(bind=engine)
 
-# Create FastAPI app
 app = FastAPI(
     title="Warehouse AI System",
     description="Smart Multi-Warehouse Dispatch and Inventory Management System",
     version="1.0.0"
 )
 
-# Allow frontend to connect
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,15 +39,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Connect your routes
+# Main Routes
 app.include_router(router, prefix="/api")
 
-# Connect Khushal's dispatch engine
+# Dispatch Routes
 if dispatch_available:
     app.include_router(dispatch_router)
     print("✅ Dispatch engine connected!")
 
-# Connect PDF upload
+# PDF Routes
 if pdf_available:
     app.include_router(pdf_router, prefix="/api")
     print("✅ PDF upload connected!")
@@ -56,7 +56,7 @@ if pdf_available:
 def home():
     return {
         "message": "Warehouse AI System is running!",
-        "docs": "Visit /docs to see all APIs",
+        "docs": "/docs",
         "dispatch_engine": dispatch_available,
         "pdf_upload": pdf_available
     }

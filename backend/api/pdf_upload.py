@@ -6,8 +6,8 @@ import re
 from datetime import datetime
 import tempfile
 import os
-from ..models.database import get_db
-from ..models.models import Warehouse, Product, Inventory
+from models.database import get_db
+from models.models import Warehouse, Product, Inventory
 
 router = APIRouter()
 

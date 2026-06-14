@@ -1,20 +1,28 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List
-from datetime import date
+from datetime import date, datetime, timedelta
 from pydantic import BaseModel
-from ..models.database import get_db
-from ..models.models import Warehouse, Product, Inventory, Order
+import bcrypt
+from jose import jwt
+
+from models.database import get_db
+from models.models import Warehouse, Product, Inventory, Order, User
 
 router = APIRouter()
 
-# ─── SCHEMAS (what data looks like) ───────────────────────
+SECRET_KEY = "warehouse-secret-key"
+ALGORITHM = "HS256"
 
+
+# ==========================
+# Pydantic Schemas
+# ==========================
 class OrderCreate(BaseModel):
     customer_name: str
     product_id: int
     quantity: int
     is_vip: bool = False
+
 
 class OrderResponse(BaseModel):
     id: int
@@ -23,37 +31,70 @@ class OrderResponse(BaseModel):
     quantity: int
     is_vip: bool
     status: str
-    warehouse_id: int | None
-    estimated_dispatch_date: date | None
+    warehouse_id: int | None = None
+    estimated_dispatch_date: date | None = None
 
     class Config:
         from_attributes = True
 
-# ─── WAREHOUSE ROUTES ──────────────────────────────────────
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# ==========================
+# Auth Routes
+# ==========================
+@router.post("/login")
+def login(data: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == data.username).first()
+    if not user or not bcrypt.checkpw(data.password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = jwt.encode(
+        {
+            "sub": user.username,
+            "role": user.role,
+            "exp": datetime.utcnow() + timedelta(hours=8)
+        },
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+    return {"access_token": token, "token_type": "bearer", "role": user.role}
+
+
+# ==========================
+# Warehouse Routes
+# ==========================
 @router.get("/warehouses")
 def get_all_warehouses(db: Session = Depends(get_db)):
-    warehouses = db.query(Warehouse).all()
-    return warehouses
+    return db.query(Warehouse).all()
+
 
 @router.get("/warehouses/{warehouse_id}/inventory")
 def get_warehouse_inventory(warehouse_id: int, db: Session = Depends(get_db)):
-    inventory = db.query(Inventory).filter(
-        Inventory.warehouse_id == warehouse_id
-    ).all()
+    inventory = (
+        db.query(Inventory)
+        .filter(Inventory.warehouse_id == warehouse_id)
+        .all()
+    )
     if not inventory:
         raise HTTPException(status_code=404, detail="Warehouse not found")
     return inventory
 
-# ─── PRODUCT ROUTES ────────────────────────────────────────
 
+# ==========================
+# Product Routes
+# ==========================
 @router.get("/products")
 def get_all_products(db: Session = Depends(get_db)):
-    products = db.query(Product).all()
-    return products
+    return db.query(Product).all()
 
-# ─── ORDER ROUTES ──────────────────────────────────────────
 
+# ==========================
+# Order Routes
+# ==========================
 @router.post("/orders", response_model=OrderResponse)
 def create_order(order: OrderCreate, db: Session = Depends(get_db)):
     new_order = Order(
@@ -68,6 +109,7 @@ def create_order(order: OrderCreate, db: Session = Depends(get_db)):
     db.refresh(new_order)
     return new_order
 
+
 @router.get("/orders/{order_id}", response_model=OrderResponse)
 def get_order(order_id: int, db: Session = Depends(get_db)):
     order = db.query(Order).filter(Order.id == order_id).first()
@@ -75,17 +117,15 @@ def get_order(order_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Order not found")
     return order
 
-# ─── DASHBOARD ROUTE ───────────────────────────────────────
 
+# ==========================
+# Dashboard Route
+# ==========================
 @router.get("/dashboard")
 def get_dashboard(db: Session = Depends(get_db)):
     total_orders = db.query(Order).count()
-    pending_orders = db.query(Order).filter(
-        Order.status == "pending"
-    ).count()
-    vip_orders = db.query(Order).filter(
-        Order.is_vip == True
-    ).count()
+    pending_orders = db.query(Order).filter(Order.status == "pending").count()
+    vip_orders = db.query(Order).filter(Order.is_vip == True).count()
     warehouses = db.query(Warehouse).count()
     return {
         "total_orders": total_orders,

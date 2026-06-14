@@ -34,6 +34,13 @@ class Inventory(Base):
     warehouse = relationship("Warehouse", back_populates="inventory")
     product = relationship("Product", back_populates="inventory")
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(20), default="user")
+
 class Order(Base):
     __tablename__ = "orders"
     id = Column(Integer, primary_key=True, index=True)

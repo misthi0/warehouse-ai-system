@@ -5,8 +5,8 @@ from typing import Optional
 from enum import Enum
 import logging
 
-from backend.models.database import SessionLocal
-from backend.models.models import Inventory, Warehouse
+from models.database import SessionLocal
+from models.models import Inventory, Warehouse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
