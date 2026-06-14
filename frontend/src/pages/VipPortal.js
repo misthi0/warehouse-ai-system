@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 
 function VipPortal() {
   const [product, setProduct] = useState("");
@@ -15,10 +16,16 @@ function VipPortal() {
       <div className="sidebar">
         <h2>ABC Dispatch</h2>
         <ul>
-          <li>Dashboard</li>
+          <li>
+            <Link to="/dashboard" style={{ color: "white", textDecoration: "none" }}>Dashboard</Link>
+          </li>
           <li>Warehouses</li>
-          <li>Orders</li>
-          <li className="active">VIP Portal</li>
+          <li>
+            <Link to="/orders" style={{ color: "white", textDecoration: "none" }}>Orders</Link>
+          </li>
+          <li className="active">
+            <Link to="/vip" style={{ color: "white", textDecoration: "none" }}>VIP Portal</Link>
+          </li>
           <li>Reports</li>
           <li>Settings</li>
         </ul>
