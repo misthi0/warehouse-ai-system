@@ -278,7 +278,8 @@ async def upload_pdf(
 
                         # Add to extracted data for frontend table
                         extracted_data.append({
-                            "product_id": actual_product_id,
+                            "product_id": int(product_id_raw),
+                            "db_product_id": actual_product_id,
                             "product_name": product_name,
                             "category": category,
                             "current_stock": current_stock,
