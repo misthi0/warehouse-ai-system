@@ -143,6 +143,7 @@ async def upload_pdf(
         inventory_added = 0
         inventory_updated = 0
         errors = []
+        extracted_data = []
 
         with pdfplumber.open(tmp_path) as pdf:
 
@@ -200,6 +201,7 @@ async def upload_pdf(
                     break
 
                 warehouse_id = warehouse_db_ids[idx]
+                warehouse_name = warehouse_list[idx][0]
 
                 # Process data rows (skip header)
                 for row_idx, row in enumerate(table):
@@ -216,6 +218,7 @@ async def upload_pdf(
                         product_name = str(row[1]).strip() if row[1] else ''
                         category = str(row[2]).strip() if row[2] else 'General'
                         current_stock = extract_number(row[3]) if len(row) > 3 else 0
+                        units_to_produce = extract_number(row[4]) if len(row) > 4 else 0
                         restock_date = extract_date(row[5]) if len(row) > 5 else None
                         dispatch_limit = extract_number(row[6]) if len(row) > 6 else 50
 
@@ -273,6 +276,18 @@ async def upload_pdf(
                             db.commit()
                             inventory_updated += 1
 
+                        # Add to extracted data for frontend table
+                        extracted_data.append({
+                            "product_id": actual_product_id,
+                            "product_name": product_name,
+                            "category": category,
+                            "current_stock": current_stock,
+                            "units_to_produce": units_to_produce,
+                            "restock_date": str(restock_date) if restock_date else None,
+                            "dispatch_limit_per_day": dispatch_limit,
+                            "warehouse_name": warehouse_name
+                        })
+
                     except Exception as row_error:
                         errors.append(f"Row {row_idx}: {str(row_error)}")
                         continue
@@ -286,7 +301,8 @@ async def upload_pdf(
             "inventory_added": inventory_added,
             "inventory_updated": inventory_updated,
             "filename": file.filename,
-            "errors": errors[:5] if errors else None
+            "errors": errors[:5] if errors else None,
+            "extracted_data": extracted_data
         }
 
     except HTTPException:
