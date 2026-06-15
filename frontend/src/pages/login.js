@@ -155,17 +155,30 @@ function Login() {
 
 const styles = {
   container: {
-    minHeight: "100vh", display: "flex", alignItems: "center",
-    justifyContent: "center",
+  minHeight: "100vh",
+    position: "relative",
+  display: "flex",
+  alignItems: "flex-end",
+  justifyContent: "flex-end",
+  paddingRight: "10%",
+  paddingBottom: "8%",
    backgroundImage: "url('/imagebuilding.png')",
     backgroundSize: "cover",
     backgroundPosition: "center",
     backgroundRepeat: "no-repeat",
   },
-  card: {
-    backgroundColor: "rgba(255,255,255,0.95)", borderRadius: "12px", padding: "32px",
-    width: "100%", maxWidth: "420px", boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
-  },
+ card: {
+  backgroundColor: "rgba(255,255,255,0.95)",
+  borderRadius: "12px",
+  padding: "32px",
+  width: "100%",
+  maxWidth: "420px",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
+
+  position: "absolute",
+  right: "8%",
+  bottom: "20%",   // Increase to move up
+},
   header: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" },
   logo: { width: "52px", height: "52px", objectFit: "contain" },
   title: { margin: 0, fontSize: "18px", fontWeight: "700", color: "#8B0000" },
