@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 
-// ✅ Misthi jab backend banaye, bas API_BASE_URL sahi kar dena
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
 function Login() {
@@ -11,14 +10,12 @@ function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Role ke hisaab se redirect
   const redirectByRole = (role) => {
     if (role === "admin") window.location.href = "/dashboard";
     else if (role === "vip") window.location.href = "/vip-portal";
     else window.location.href = "/order-portal";
   };
 
-  // ✅ Real login — Misthi ke backend se connect hoga
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
@@ -46,7 +43,6 @@ function Login() {
     }
   };
 
-  // ✅ Register
   const handleRegister = async (e) => {
     e.preventDefault();
     setError("");
@@ -72,7 +68,6 @@ function Login() {
     }
   };
 
-  // ✅ Demo buttons — backend nahi hai tab bhi kaam karta hai
   const handleDemoLogin = (role) => {
     localStorage.setItem("role", role);
     localStorage.setItem("username", role);
@@ -83,7 +78,6 @@ function Login() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-
         {/* Logo + Title */}
         <div style={styles.header}>
           <img src="/logo-abc.png" alt="Aditya Birla Carbon" style={styles.logo} />
@@ -93,7 +87,7 @@ function Login() {
           </div>
         </div>
 
-        {/* Sign In / Register Tabs */}
+        {/* Tabs */}
         <div style={styles.tabRow}>
           <button
             style={activeTab === "signin" ? styles.tabActive : styles.tabInactive}
@@ -109,7 +103,7 @@ function Login() {
           </button>
         </div>
 
-        {/* Error Message */}
+        {/* Error */}
         {error && <div style={styles.error}>{error}</div>}
 
         {/* Form */}
@@ -148,15 +142,9 @@ function Login() {
         {/* Quick Demo Login */}
         <p style={styles.demoLabel}>Quick demo login</p>
         <div style={styles.demoRow}>
-          <button style={styles.adminBtn} onClick={() => handleDemoLogin("admin")}>
-            Admin
-          </button>
-          <button style={styles.vipBtn} onClick={() => handleDemoLogin("vip")}>
-            VIP
-          </button>
-          <button style={styles.customerBtn} onClick={() => handleDemoLogin("customer")}>
-            Customer
-          </button>
+          <button style={styles.adminBtn} onClick={() => handleDemoLogin("admin")}>Admin</button>
+          <button style={styles.vipBtn} onClick={() => handleDemoLogin("vip")}>VIP</button>
+          <button style={styles.customerBtn} onClick={() => handleDemoLogin("customer")}>Customer</button>
         </div>
 
         <p style={styles.footer}>© 2024 Aditya Birla Carbon · All rights reserved</p>
@@ -168,23 +156,21 @@ function Login() {
 const styles = {
   container: {
     minHeight: "100vh", display: "flex", alignItems: "center",
-    justifyContent: "center", backgroundColor: "#f5f5f5",
+    justifyContent: "center",
+   backgroundImage: "url('/imagebuilding.png')",
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    backgroundRepeat: "no-repeat",
   },
   card: {
-    backgroundColor: "#fff", borderRadius: "12px", padding: "32px",
-    width: "100%", maxWidth: "420px",
-    boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+    backgroundColor: "rgba(255,255,255,0.95)", borderRadius: "12px", padding: "32px",
+    width: "100%", maxWidth: "420px", boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
   },
-  header: {
-    display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px",
-  },
+  header: { display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" },
   logo: { width: "52px", height: "52px", objectFit: "contain" },
   title: { margin: 0, fontSize: "18px", fontWeight: "700", color: "#8B0000" },
   subtitle: { margin: 0, fontSize: "13px", color: "#666" },
-  tabRow: {
-    display: "flex", marginBottom: "20px", borderRadius: "8px",
-    overflow: "hidden", border: "1px solid #ddd",
-  },
+  tabRow: { display: "flex", marginBottom: "20px", borderRadius: "8px", overflow: "hidden", border: "1px solid #ddd" },
   tabActive: {
     flex: 1, padding: "12px", backgroundColor: "#C0392B", color: "#fff",
     border: "none", cursor: "pointer", fontWeight: "600", fontSize: "14px",
@@ -213,26 +199,19 @@ const styles = {
     border: "none", borderRadius: "8px", fontSize: "15px",
     fontWeight: "600", cursor: "pointer", width: "100%", marginTop: "4px",
   },
-  demoLabel: {
-    textAlign: "center", color: "#999", fontSize: "12px", margin: "20px 0 10px",
-  },
-  demoRow: {
-    display: "flex", gap: "10px", justifyContent: "center", marginBottom: "20px",
-  },
+  demoLabel: { textAlign: "center", color: "#999", fontSize: "12px", margin: "20px 0 10px" },
+  demoRow: { display: "flex", gap: "10px", justifyContent: "center", marginBottom: "20px" },
   adminBtn: {
     padding: "8px 20px", backgroundColor: "#fde8e8", color: "#C0392B",
-    border: "1px solid #f5c0c0", borderRadius: "20px", cursor: "pointer",
-    fontWeight: "600", fontSize: "13px",
+    border: "1px solid #f5c0c0", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px",
   },
   vipBtn: {
     padding: "8px 20px", backgroundColor: "#fef9e7", color: "#9a7d0a",
-    border: "1px solid #f9e79f", borderRadius: "20px", cursor: "pointer",
-    fontWeight: "600", fontSize: "13px",
+    border: "1px solid #f9e79f", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px",
   },
   customerBtn: {
     padding: "8px 20px", backgroundColor: "#f5f5f5", color: "#333",
-    border: "1px solid #ddd", borderRadius: "20px", cursor: "pointer",
-    fontWeight: "600", fontSize: "13px",
+    border: "1px solid #ddd", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px",
   },
   footer: { textAlign: "center", color: "#aaa", fontSize: "11px", marginTop: "8px" },
 };
