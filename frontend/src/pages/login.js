@@ -147,7 +147,7 @@ function Login() {
           <button style={styles.customerBtn} onClick={() => handleDemoLogin("customer")}>Customer</button>
         </div>
 
-        <p style={styles.footer}>© 2024 Aditya Birla Carbon · All rights reserved</p>
+        <p style={styles.footer}>© 2026 Aditya Birla Carbon · All rights reserved</p>
       </div>
     </div>
   );
