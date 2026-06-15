@@ -54,37 +54,25 @@ class DispatchResponse(BaseModel):
 # ── Database Warehouse Loader ──
 def get_warehouses(product_id: int) -> list[dict]:
     db = SessionLocal()
-
     try:
         results = (
             db.query(Inventory, Warehouse)
-            .join(
-                Warehouse,
-                Inventory.warehouse_id == Warehouse.id
-            )
-            .filter(
-                Inventory.product_id == product_id
-            )
+            .join(Warehouse, Inventory.warehouse_id == Warehouse.id)
+            .filter(Inventory.product_id == product_id)
             .all()
         )
-
         warehouses = []
-
         for inv, wh in results:
-            warehouses.append(
-                {
-                    "warehouse_id": wh.id,
-                    "name": wh.name,
-                    "product_id": inv.product_id,
-                    "available_quantity": inv.available_quantity,
-                    "dispatch_limit": inv.dispatch_limit,
-                    "dispatched_today": inv.dispatched_today,
-                    "restock_date": str(inv.restock_date)
-                }
-            )
-
+            warehouses.append({
+                "warehouse_id": wh.id,
+                "name": wh.name,
+                "product_id": inv.product_id,
+                "available_quantity": inv.available_quantity,
+                "dispatch_limit": inv.dispatch_limit,
+                "dispatched_today": inv.dispatched_today,
+                "restock_date": str(inv.restock_date)
+            })
         return warehouses
-
     finally:
         db.close()
 
@@ -100,17 +88,14 @@ def select_warehouse(
     Both VIP and regular get warehouse with most remaining capacity.
     VIP customers get additional benefits like express dispatch.
     """
-
     eligible = [
         w for w in warehouses
         if w["available_quantity"] >= quantity
         and w["dispatched_today"] < w["dispatch_limit"]
         and (w["dispatch_limit"] - w["dispatched_today"]) >= quantity
     ]
-
     if not eligible:
         return None
-
     return max(
         eligible,
         key=lambda w: w["dispatch_limit"] - w["dispatched_today"]
@@ -118,73 +103,60 @@ def select_warehouse(
 
 
 # ── 2. Dispatch Limit Check ──
-def check_dispatch_limit(
-    warehouse: dict,
-    quantity: int
-) -> bool:
-    remaining = (
-        warehouse["dispatch_limit"]
-        - warehouse["dispatched_today"]
-    )
+def check_dispatch_limit(warehouse: dict, quantity: int) -> bool:
+    remaining = warehouse["dispatch_limit"] - warehouse["dispatched_today"]
     return remaining >= quantity
 
 
 # ── 3. Wait Time Calculator ──
 def calculate_wait_time(restock_date: str) -> int:
     try:
-        restock = datetime.strptime(
-            restock_date,
-            "%Y-%m-%d"
-        )
-
+        restock = datetime.strptime(restock_date, "%Y-%m-%d")
         today = datetime.today()
-
         delta = (restock - today).days
-
         return max(delta, 0)
-
     except ValueError:
         return 0
 
 
 # ── 4. Restock Date Logic ──
-def get_restock_info(
-    warehouses: list[dict]
-) -> dict | None:
-
-    dates = [
-        w["restock_date"]
-        for w in warehouses
-        if w.get("restock_date")
-    ]
-
+def get_restock_info(warehouses: list[dict]) -> dict | None:
+    dates = [w["restock_date"] for w in warehouses if w.get("restock_date")]
     if not dates:
         return None
-
     earliest = min(dates)
-
-    wait_days = calculate_wait_time(
-        earliest
-    )
-
+    wait_days = calculate_wait_time(earliest)
     return {
         "restock_date": earliest,
         "wait_days": wait_days
     }
 
 
-# ── Main Dispatch Endpoint ──
-@router.post(
-    "/api/dispatch",
-    response_model=DispatchResponse
-)
-def dispatch_order(
-    order: OrderRequest
-) -> DispatchResponse:
+# ── 5. Update Inventory After Dispatch ──
+def update_inventory_after_dispatch(
+    warehouse_id: int,
+    product_id: int,
+    quantity: int
+):
+    """Deduct dispatched quantity from available stock and update dispatched_today"""
+    db = SessionLocal()
+    try:
+        inv = db.query(Inventory).filter(
+            Inventory.warehouse_id == warehouse_id,
+            Inventory.product_id == product_id
+        ).first()
+        if inv:
+            inv.available_quantity -= quantity
+            inv.dispatched_today += quantity
+            db.commit()
+    finally:
+        db.close()
 
-    warehouses = get_warehouses(
-        order.product_id
-    )
+
+# ── Main Dispatch Endpoint ──
+@router.post("/api/dispatch", response_model=DispatchResponse)
+def dispatch_order(order: OrderRequest) -> DispatchResponse:
+    warehouses = get_warehouses(order.product_id)
 
     if not warehouses:
         raise HTTPException(
@@ -192,19 +164,18 @@ def dispatch_order(
             detail="Product not found in inventory"
         )
 
-    best = select_warehouse(
-        warehouses,
-        order.quantity,
-        order.is_vip
-    )
+    best = select_warehouse(warehouses, order.quantity, order.is_vip)
 
-    if best and not check_dispatch_limit(
-        best,
-        order.quantity
-    ):
+    if best and not check_dispatch_limit(best, order.quantity):
         best = None
 
     if best:
+        # Update database: deduct stock and increment dispatched_today
+        update_inventory_after_dispatch(
+            warehouse_id=best["warehouse_id"],
+            product_id=order.product_id,
+            quantity=order.quantity
+        )
 
         logger.info(
             "Order approved",
@@ -224,14 +195,10 @@ def dispatch_order(
             is_vip=order.is_vip,
             warehouse_id=best["warehouse_id"],
             warehouse_name=best["name"],
-            estimated_dispatch_date=datetime.today().strftime(
-                "%Y-%m-%d"
-            )
+            estimated_dispatch_date=datetime.today().strftime("%Y-%m-%d")
         )
 
-    restock = get_restock_info(
-        warehouses
-    )
+    restock = get_restock_info(warehouses)
 
     if not restock:
         raise HTTPException(
@@ -257,10 +224,7 @@ def dispatch_order(
         warehouse_id=None,
         message=(
             f"Product unavailable. "
-            f"Expected dispatch after "
-            f"{restock['wait_days']} days."
+            f"Expected dispatch after {restock['wait_days']} days."
         ),
-        estimated_dispatch_date=restock[
-            "restock_date"
-        ]
+        estimated_dispatch_date=restock["restock_date"]
     )

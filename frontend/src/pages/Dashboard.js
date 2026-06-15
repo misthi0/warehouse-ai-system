@@ -1,14 +1,38 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+
+const mockData = {
+  stats: { totalOrders: 2, dispatchedToday: 1, pendingOrders: 1, vipOrders: 0, unavailable: 0 },
+  warehouses: [
+    { name: "Warehouse 1", dispatched: 3, limit: 380, stock: 1597 },
+    { name: "Warehouse 2", dispatched: 0, limit: 460, stock: 1380 },
+    { name: "Warehouse 3", dispatched: 0, limit: 360, stock: 1090 },
+  ],
+  vipOrders: [
+    { id: 2, product: "Laptop Pro 15", qty: 500, type: "ADMIN", status: "pending",    warehouse: "—" },
+    { id: 1, product: "Laptop Pro 15", qty: 3,   type: "ADMIN", status: "dispatched", warehouse: "Warehouse 1" },
+  ],
+  pendingOrders: [
+    { id: 2, product: "Laptop Pro 15", qty: 500, type: "ADMIN", days: 5, date: "2026-06-19" },
+  ],
+  inventory: {
+    "Warehouse 1": [
+      { id: "P001", product: "Wireless Mouse",      category: "Electronics", stock: 500, unit: "pcs", restock: "—",          limit: 100 },
+      { id: "P002", product: "USB-C Hub",            category: "Electronics", stock: 300, unit: "pcs", restock: "—",          limit: 80  },
+      { id: "P003", product: "Mechanical Keyboard",  category: "Electronics", stock: 150, unit: "pcs", restock: "2026-06-19", limit: 40  },
+      { id: "P004", product: 'Monitor 27"',          category: "Electronics", stock: 80,  unit: "pcs", restock: "—",          limit: 20  },
+      { id: "P005", product: "Webcam HD",            category: "Electronics", stock: 250, unit: "pcs", restock: "—",          limit: 60  },
+      { id: "P006", product: "Headphones Pro",       category: "Electronics", stock: 120, unit: "pcs", restock: "2026-06-17", limit: 30  },
+    ],
+    "Warehouse 2": [],
+    "Warehouse 3": [],
+  },
+};
 
 function Dashboard() {
-  const [activeWarehouse, setActiveWarehouse] = useState("");
-  const [warehouses, setWarehouses] = useState([]);
-  const [inventory, setInventory] = useState({});
-  const [stats, setStats] = useState({ totalOrders: 0, dispatchedToday: 0, pendingOrders: 0, vipOrders: 0, unavailable: 0 });
-  const [vipOrders, setVipOrders] = useState([]);
-  const [pendingOrders, setPendingOrders] = useState([]);
+  const [activeWarehouse, setActiveWarehouse] = useState("Warehouse 1");
+  const [data, setData] = useState(mockData);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const username = localStorage.getItem("username") || "admin";
@@ -18,62 +42,25 @@ function Dashboard() {
     window.location.href = "/";
   };
 
-  const fetchData = async () => {
+const handleRefresh = async () => {
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/inventory/all`, {
+      const res = await fetch(`${API_BASE_URL}/api/dashboard`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const json = await res.json();
-        const inv = {};
-        const whs = [];
-        json.forEach((wh) => {
-          inv[wh.warehouse_name] = wh.products.map((p) => ({
-            inventory_id: p.inventory_id,
-            id: `P${String(p.product_id).padStart(3, "0")}`,
-            product: p.product_name,
-            category: p.category || "General",
-            stock: p.available_quantity,
-            unit: "pcs",
-            restock: p.restock_date || "—",
-            limit: p.dispatch_limit,
-          }));
-          whs.push({
-            name: wh.warehouse_name,
-            dispatched: wh.products.reduce((s, p) => s + (p.dispatched_today || 0), 0),
-            limit: wh.products.reduce((s, p) => s + (p.dispatch_limit || 0), 0),
-            stock: wh.products.reduce((s, p) => s + (p.available_quantity || 0), 0),
-          });
+        // Safely merge with mockData so missing fields don't crash
+        setData({
+          stats:         json.stats         || mockData.stats,
+          warehouses:    json.warehouses     || mockData.warehouses,
+          vipOrders:     json.vipOrders      || mockData.vipOrders,
+          pendingOrders: json.pendingOrders  || mockData.pendingOrders,
+          inventory:     json.inventory      || mockData.inventory,
         });
-        setWarehouses(whs);
-        setInventory(inv);
-        setStats((prev) => ({
-          ...prev,
-          dispatchedToday: whs.reduce((s, w) => s + w.dispatched, 0),
-        }));
-        if (whs.length > 0) setActiveWarehouse((prev) => prev || whs[0].name);
       }
     } catch (err) {
-      console.log("Fetch error:", err);
-    }
-  };
-
-  useEffect(() => { fetchData(); }, []);
-
-  const handleRefresh = () => fetchData();
-
-  const handleDelete = async (inventoryId) => {
-    if (!window.confirm("Delete this item?")) return;
-    try {
-      const token = localStorage.getItem("token");
-      await fetch(`${API_BASE_URL}/api/inventory/${inventoryId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      fetchData();
-    } catch (err) {
-      console.log("Delete error:", err);
+      console.log("Backend not connected yet, using mock data");
     }
   };
 
@@ -92,35 +79,31 @@ function Dashboard() {
     formData.append("file", file);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/upload-pdf`, {
+      const res = await fetch(`${API_BASE_URL}/api/inventory/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       if (res.ok) {
-        const result = await res.json();
-        setUploadMsg(`✅ PDF uploaded! ${result.inventory_added || 0} items added, ${result.inventory_updated || 0} updated.`);
-        await fetchData();
+        setUploadMsg("✅ PDF uploaded successfully! Inventory updated.");
+        handleRefresh();
       } else {
-        const err = await res.json();
-        setUploadMsg(`❌ Upload failed: ${err.detail || "Unknown error"}`);
+        setUploadMsg("⚠️ Backend not connected yet — PDF received on frontend.");
       }
     } catch (err) {
-      setUploadMsg("⚠️ Could not connect to backend.");
+      setUploadMsg("⚠️ Backend not connected yet — PDF received on frontend.");
     } finally {
       setUploading(false);
     }
   };
 
   const statCards = [
-    { icon: "📦", color: "#C0392B", bg: "#fde8e8", label: "Total Orders",     value: stats.totalOrders },
-    { icon: "✅", color: "#27AE60", bg: "#e8f8ef", label: "Dispatched Today", value: stats.dispatchedToday },
-    { icon: "⏰", color: "#F39C12", bg: "#fef9e7", label: "Pending Orders",   value: stats.pendingOrders },
-    { icon: "⭐", color: "#8E44AD", bg: "#f5eef8", label: "VIP Orders",       value: stats.vipOrders },
-    { icon: "⚠️", color: "#E74C3C", bg: "#fdecea", label: "Unavailable",      value: stats.unavailable },
+    { icon: "📦", color: "#C0392B", bg: "#fde8e8", label: "Total Orders",     value: data.stats.totalOrders },
+    { icon: "✅", color: "#27AE60", bg: "#e8f8ef", label: "Dispatched Today", value: data.stats.dispatchedToday },
+    { icon: "⏰", color: "#F39C12", bg: "#fef9e7", label: "Pending Orders",   value: data.stats.pendingOrders },
+    { icon: "⭐", color: "#8E44AD", bg: "#f5eef8", label: "VIP Orders",       value: data.stats.vipOrders },
+    { icon: "⚠️", color: "#E74C3C", bg: "#fdecea", label: "Unavailable",      value: data.stats.unavailable },
   ];
-
-  const currentWarehouse = activeWarehouse || (warehouses[0] && warehouses[0].name) || "";
 
   return (
     <div style={s.page}>
@@ -175,152 +158,121 @@ function Dashboard() {
         <div style={s.row2}>
           <div style={s.card}>
             <h3 style={s.cardTitle}>⚡ Warehouse Utilization</h3>
-            {warehouses.length === 0 ? (
-              <div style={{ color: "#aaa", textAlign: "center", padding: "20px", fontSize: "13px" }}>
-                Upload a PDF to see warehouse data
-              </div>
-            ) : (
-              warehouses.map((w, i) => {
-                const pct = w.limit > 0 ? ((w.dispatched / w.limit) * 100).toFixed(1) : 0;
-                return (
-                  <div key={i} style={{ marginBottom: "16px" }}>
-                    <div style={s.whRow}>
-                      <span style={s.whName}>{w.name}</span>
-                      <span style={s.whDispatch}>{w.dispatched}/{w.limit} dispatched</span>
-                    </div>
-                    <div style={s.progressBg}>
-                      <div style={{ ...s.progressFill, width: `${pct}%` }} />
-                    </div>
-                    <div style={s.whPct}>{pct}%</div>
-                    <div style={s.whStock}>Stock: {w.stock.toLocaleString()} units</div>
+            {data.warehouses.map((w, i) => {
+              const pct = w.limit > 0 ? ((w.dispatched / w.limit) * 100).toFixed(1) : 0;
+              return (
+                <div key={i} style={{ marginBottom: "16px" }}>
+                  <div style={s.whRow}>
+                    <span style={s.whName}>{w.name}</span>
+                    <span style={s.whDispatch}>{w.dispatched}/{w.limit} dispatched</span>
                   </div>
-                );
-              })
-            )}
+                  <div style={s.progressBg}>
+                    <div style={{ ...s.progressFill, width: `${pct}%` }} />
+                  </div>
+                  <div style={s.whPct}>{pct}%</div>
+                  <div style={s.whStock}>Stock: {w.stock.toLocaleString()} units</div>
+                </div>
+              );
+            })}
           </div>
 
           <div style={s.card}>
-            <h3 style={s.cardTitle}>⭐ VIP Orders ({vipOrders.length})</h3>
-            {vipOrders.length === 0 ? (
-              <div style={{ color: "#aaa", textAlign: "center", padding: "20px", fontSize: "13px" }}>
-                No VIP orders yet
-              </div>
-            ) : (
-              <table style={s.table}>
-                <thead>
-                  <tr>
-                    {["ORDER","PRODUCT","QTY","TYPE","STATUS","WAREHOUSE"].map(h => (
-                      <th key={h} style={s.th}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {vipOrders.map((o, i) => (
-                    <tr key={i}>
-                      <td style={s.td}>#{o.id}</td>
-                      <td style={s.td}>{o.product}</td>
-                      <td style={s.td}>{o.qty}</td>
-                      <td style={s.td}><span style={s.badgeAdmin}>{o.type}</span></td>
-                      <td style={s.td}>
-                        <span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>
-                          {o.status}
-                        </span>
-                      </td>
-                      <td style={s.td}>{o.warehouse}</td>
-                    </tr>
+            <h3 style={s.cardTitle}>⭐ VIP Orders ({data.vipOrders.length})</h3>
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  {["ORDER","PRODUCT","QTY","TYPE","STATUS","WAREHOUSE"].map(h => (
+                    <th key={h} style={s.th}>{h}</th>
                   ))}
-                </tbody>
-              </table>
-            )}
+                </tr>
+              </thead>
+              <tbody>
+                {data.vipOrders.map((o, i) => (
+                  <tr key={i}>
+                    <td style={s.td}>#{o.id}</td>
+                    <td style={s.td}>{o.product}</td>
+                    <td style={s.td}>{o.qty}</td>
+                    <td style={s.td}><span style={s.badgeAdmin}>{o.type}</span></td>
+                    <td style={s.td}>
+                      <span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>
+                        {o.status}
+                      </span>
+                    </td>
+                    <td style={s.td}>{o.warehouse}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
         {/* Pending Orders + Warehouse Inventory */}
         <div style={s.row2}>
           <div style={s.card}>
-            <h3 style={s.cardTitle}>⏰ Pending Orders ({pendingOrders.length})</h3>
-            {pendingOrders.length === 0 ? (
-              <div style={{ color: "#aaa", textAlign: "center", padding: "20px", fontSize: "13px" }}>
-                No pending orders
-              </div>
-            ) : (
-              pendingOrders.map((o, i) => (
-                <div key={i} style={s.pendingCard}>
-                  <div>
-                    <div style={s.pendingTitle}>#{o.id} — {o.product}</div>
-                    <div style={s.pendingSub}>Qty: {o.qty} · {o.type}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={s.pendingDays}>{o.days} days</div>
-                    <div style={s.pendingDate}>{o.date}</div>
-                  </div>
+            <h3 style={s.cardTitle}>⏰ Pending Orders ({data.pendingOrders.length})</h3>
+            {data.pendingOrders.map((o, i) => (
+              <div key={i} style={s.pendingCard}>
+                <div>
+                  <div style={s.pendingTitle}>#{o.id} — {o.product}</div>
+                  <div style={s.pendingSub}>Qty: {o.qty} · {o.type}</div>
                 </div>
-              ))
-            )}
+                <div style={{ textAlign: "right" }}>
+                  <div style={s.pendingDays}>{o.days} days</div>
+                  <div style={s.pendingDate}>{o.date}</div>
+                </div>
+              </div>
+            ))}
           </div>
 
           <div style={s.card}>
             <h3 style={s.cardTitle}>🏭 Warehouse Inventory</h3>
-            {warehouses.length === 0 ? (
-              <div style={{ color: "#aaa", textAlign: "center", padding: "20px", fontSize: "13px" }}>
-                Upload a PDF to see inventory
-              </div>
-            ) : (
-              <>
-                <div style={s.tabRow}>
-                  {warehouses.map(w => (
-                    <button
-                      key={w.name}
-                      onClick={() => setActiveWarehouse(w.name)}
-                      style={currentWarehouse === w.name ? s.tabActive : s.tabInactive}
-                    >
-                      {w.name}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={s.table}>
-                    <thead>
-                      <tr>
-                        {["PRODUCT ID","PRODUCT NAME","CATEGORY","CURRENT STOCK","UNIT","RESTOCK DATE","DISPATCH LIMIT/DAY","ACTION"].map(h => (
-                          <th key={h} style={s.th}>{h}</th>
-                        ))}
+            <div style={s.tabRow}>
+              {["Warehouse 1", "Warehouse 2", "Warehouse 3"].map(w => (
+                <button
+                  key={w}
+                  onClick={() => setActiveWarehouse(w)}
+                  style={activeWarehouse === w ? s.tabActive : s.tabInactive}
+                >
+                  {w}
+                </button>
+              ))}
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    {["PRODUCT ID","PRODUCT NAME","CATEGORY","CURRENT STOCK","UNIT","RESTOCK DATE","DISPATCH LIMIT/DAY"].map(h => (
+                      <th key={h} style={s.th}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.inventory[activeWarehouse] || []).length === 0 ? (
+                    <tr>
+                      <td colSpan="7" style={{ ...s.td, textAlign: "center", color: "#aaa" }}>
+                        No inventory data
+                      </td>
+                    </tr>
+                  ) : (
+                    (data.inventory[activeWarehouse] || []).map((item, i) => (
+                      <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
+                        <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
+                        <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
+                        <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>
+                          {item.stock}
+                        </td>
+                        <td style={s.td}>{item.unit}</td>
+                        <td style={{ ...s.td, color: item.restock === "—" ? "#aaa" : "#E67E22" }}>
+                          {item.restock}
+                        </td>
+                        <td style={{ ...s.td, fontWeight: "700", color: "#C0392B" }}>{item.limit}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {(inventory[currentWarehouse] || []).length === 0 ? (
-                        <tr>
-                          <td colSpan="8" style={{ ...s.td, textAlign: "center", color: "#aaa" }}>
-                            No inventory data
-                          </td>
-                        </tr>
-                      ) : (
-                        (inventory[currentWarehouse] || []).map((item, i) => (
-                          <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                            <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
-                            <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
-                            <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
-                            <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>
-                              {item.stock}
-                            </td>
-                            <td style={s.td}>{item.unit}</td>
-                            <td style={{ ...s.td, color: item.restock === "—" ? "#aaa" : "#E67E22" }}>
-                              {item.restock}
-                            </td>
-                            <td style={{ ...s.td, fontWeight: "700", color: "#C0392B" }}>{item.limit}</td>
-                            <td style={s.td}>
-                              <button onClick={() => handleDelete(item.inventory_id)} style={s.deleteBtn}>
-                                🗑 Delete
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
@@ -420,7 +372,7 @@ const s = {
   pendingSub:    { fontSize: "12px", color: "#888", marginTop: "2px" },
   pendingDays:   { color: "#E67E22", fontWeight: "600", fontSize: "13px" },
   pendingDate:   { color: "#aaa", fontSize: "12px" },
-  tabRow:        { display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" },
+  tabRow:        { display: "flex", gap: "8px", marginBottom: "12px" },
   tabActive:     { padding: "6px 14px", backgroundColor: "#C0392B", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600" },
   tabInactive:   { padding: "6px 14px", backgroundColor: "#f5f5f5", color: "#333", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer", fontSize: "13px" },
   uploadCard:    { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
@@ -429,7 +381,6 @@ const s = {
   dropIcon:      { fontSize: "32px", marginBottom: "8px" },
   dropText:      { fontWeight: "600", fontSize: "14px", color: "#444" },
   dropMax:       { color: "#aaa", fontSize: "12px", marginTop: "4px" },
-  deleteBtn:     { backgroundColor: "#fdecea", color: "#C0392B", border: "1px solid #f5c6cb", borderRadius: "6px", padding: "4px 10px", cursor: "pointer", fontSize: "12px" },
 };
 
 export default Dashboard;

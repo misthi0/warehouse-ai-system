@@ -179,7 +179,7 @@ async def upload_pdf(
                         restock_date   = extract_date(row[4]) if len(row) > 4 else None
                         dispatch_limit = extract_number(row[5]) if len(row) > 5 else 50
 
-                        # ✅ FIXED: Skip only truly empty rows, allow P001 style IDs
+                        # Skip only truly empty rows, allow P001 style IDs
                         if not product_name or product_name.lower() in ['none', 'null', '']:
                             continue
                         if not product_id_raw or product_id_raw.lower() in ['none', 'null', '']:
@@ -223,15 +223,19 @@ async def upload_pdf(
                             )
                             db.add(inv)
                             db.commit()
+                            db.refresh(inv)
                             inventory_added += 1
+                            inventory_record_id = inv.id
                         else:
                             existing_inv.available_quantity = current_stock
                             existing_inv.dispatch_limit = dispatch_limit
                             existing_inv.restock_date = restock_date
                             db.commit()
                             inventory_updated += 1
+                            inventory_record_id = existing_inv.id
 
                         extracted_data.append({
+                            "inventory_id": inventory_record_id,
                             "product_id_raw": product_id_raw,
                             "db_product_id": actual_product_id,
                             "product_name": product_name,
@@ -239,6 +243,7 @@ async def upload_pdf(
                             "current_stock": current_stock,
                             "restock_date": str(restock_date) if restock_date else None,
                             "dispatch_limit_per_day": dispatch_limit,
+                            "warehouse_id": warehouse_id,
                             "warehouse_name": warehouse_name
                         })
 
