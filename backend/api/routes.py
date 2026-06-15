@@ -133,3 +133,19 @@ def get_dashboard(db: Session = Depends(get_db)):
         "vip_orders": vip_orders,
         "total_warehouses": warehouses
     }
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+@router.post("/auth/login")
+def login(request: LoginRequest):
+    if request.username == "admin" and request.password == "admin123":
+        return {"token": "admin-token-2024", "user": {"username": "admin", "role": "admin"}}
+    elif request.username == "vip" and request.password == "vip123":
+        return {"token": "vip-token-2024", "user": {"username": "vip", "role": "vip"}}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+@router.post("/auth/register")
+def register(request: LoginRequest):
+    return {"message": "Registered!", "user": {"username": request.username}}

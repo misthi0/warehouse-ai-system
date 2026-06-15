@@ -36,7 +36,7 @@ def is_header_row(row):
     """Check if a table row is a header row"""
     if not row:
         return False
-    header_keywords = ['product', 'name', 'category', 'stock', 
+    header_keywords = ['product', 'name', 'category', 'stock',
                        'id', 'restock', 'dispatch', 'produce', 'limit']
     row_text = ' '.join([str(c).lower() for c in row if c])
     matches = sum(1 for kw in header_keywords if kw in row_text)
@@ -45,75 +45,40 @@ def is_header_row(row):
 def find_warehouses_in_text(full_text):
     """
     Find ALL warehouse names from PDF text.
-    Works for any warehouse naming format.
-    Patterns supported:
-    - 'Warehouse 1 — Delhi North'
-    - 'Warehouse 1 - Delhi North'
-    - 'WAREHOUSE 1 — Delhi North'
+    Works for simple 'Warehouse 1' or 'Warehouse 1 — Delhi North' formats.
     """
     warehouses = []
     seen_names = set()
-
     lines = full_text.split('\n')
     for line in lines:
         line = line.strip()
         if not line:
             continue
-
-        # Must contain 'warehouse' (case insensitive)
-        if 'warehouse' not in line.lower():
-            continue
-
-        # Must contain a separator
-        if '—' not in line and ' - ' not in line:
-            continue
-
-        # Must NOT be a location detail line
-        if 'location:' in line.lower():
-            continue
-
-        # Must have a digit (warehouse number)
-        if not any(c.isdigit() for c in line):
-            continue
-
-        # Extract name and location
-        sep = '—' if '—' in line else ' - '
-        parts = line.split(sep, 1)
-        if len(parts) < 2:
-            continue
-
-        name = parts[0].strip()
-        location_raw = parts[1].strip()
-
-        # Clean location - remove extra info after | or newline
-        location = location_raw.split('|')[0].strip()
-        location = location.split('\n')[0].strip()
-        location = re.sub(r'\s+', ' ', location).strip()
-
-        # Validate: name must have 'Warehouse' and a number
-        if not re.search(r'[Ww]arehouse\s*\d+', name):
-            continue
-
-        # Normalize name
-        name = re.sub(r'\s+', ' ', name).strip()
-
-        if name and location and name not in seen_names:
-            seen_names.add(name)
-            warehouses.append((name, location))
-
+        # Match "Warehouse 1", "Warehouse 2", etc. anywhere in line
+        match = re.search(r'(Warehouse\s*\d+)', line, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip()
+            name = re.sub(r'\s+', ' ', name)
+            if name not in seen_names:
+                seen_names.add(name)
+                # Extract location after separator if present, else use name
+                location = name
+                for sep in ['—', ' - ', ':']:
+                    if sep in line:
+                        location = line.split(sep, 1)[1].strip()
+                        break
+                warehouses.append((name, location))
     return warehouses
 
 def is_product_table(table):
     """Check if a table contains product/inventory data"""
     if not table or len(table) < 2:
         return False
-    # Check first row (header)
     first_row = [str(c).lower().strip() if c else '' for c in table[0]]
     row_text = ' '.join(first_row)
-    # Must have product-related headers
-    required = ['product', 'stock', 'restock']
+    required = ['product', 'stock']
     matches = sum(1 for kw in required if kw in row_text)
-    return matches >= 2
+    return matches >= 1
 
 # ── MAIN ENDPOINTS ────────────────────────────────────────────
 
@@ -125,12 +90,10 @@ async def upload_pdf(
     """
     Upload ANY warehouse PDF.
     Automatically detects warehouses, products, and inventory.
-    Works for any number of warehouses and products.
     """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files allowed!")
 
-    # Save uploaded file temporarily
     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
         content = await file.read()
         tmp.write(content)
@@ -167,12 +130,8 @@ async def upload_pdf(
             if not warehouse_list:
                 raise HTTPException(
                     status_code=400,
-                    detail="No warehouses found in PDF! Make sure format is: 'Warehouse N — City Name'"
+                    detail="No warehouses found in PDF! Make sure PDF contains 'Warehouse 1', 'Warehouse 2' etc."
                 )
-
-            if len(warehouse_list) != len(all_product_tables):
-                # Try to match anyway with available data
-                pass
 
             # Step 3: Create/update warehouses in DB
             warehouse_db_ids = []
@@ -203,29 +162,27 @@ async def upload_pdf(
                 warehouse_id = warehouse_db_ids[idx]
                 warehouse_name = warehouse_list[idx][0]
 
-                # Process data rows (skip header)
                 for row_idx, row in enumerate(table):
                     # Skip header rows
                     if row_idx == 0 or is_header_row(row):
                         continue
 
-                    if not row or len(row) < 6:
+                    if not row or len(row) < 4:
                         continue
 
                     try:
-                        # Extract fields
+                        # Extract fields — handles P001, 001, or 1 style IDs
                         product_id_raw = str(row[0]).strip() if row[0] else ''
-                        product_name = str(row[1]).strip() if row[1] else ''
-                        category = str(row[2]).strip() if row[2] else 'General'
-                        current_stock = extract_number(row[3]) if len(row) > 3 else 0
-                        units_to_produce = extract_number(row[4]) if len(row) > 4 else 0
-                        restock_date = extract_date(row[5]) if len(row) > 5 else None
-                        dispatch_limit = extract_number(row[6]) if len(row) > 6 else 50
+                        product_name   = str(row[1]).strip() if row[1] else ''
+                        category       = str(row[2]).strip() if row[2] else 'General'
+                        current_stock  = extract_number(row[3]) if len(row) > 3 else 0
+                        restock_date   = extract_date(row[4]) if len(row) > 4 else None
+                        dispatch_limit = extract_number(row[5]) if len(row) > 5 else 50
 
-                        # Skip empty or invalid rows
+                        # ✅ FIXED: Skip only truly empty rows, allow P001 style IDs
                         if not product_name or product_name.lower() in ['none', 'null', '']:
                             continue
-                        if not product_id_raw or not product_id_raw.isdigit():
+                        if not product_id_raw or product_id_raw.lower() in ['none', 'null', '']:
                             continue
 
                         # Get or create product
@@ -245,7 +202,6 @@ async def upload_pdf(
                             actual_product_id = product.id
                             products_added += 1
                         else:
-                            # Update category if changed
                             existing_product.description = category
                             db.commit()
                             actual_product_id = existing_product.id
@@ -269,21 +225,18 @@ async def upload_pdf(
                             db.commit()
                             inventory_added += 1
                         else:
-                            # Update existing inventory
                             existing_inv.available_quantity = current_stock
                             existing_inv.dispatch_limit = dispatch_limit
                             existing_inv.restock_date = restock_date
                             db.commit()
                             inventory_updated += 1
 
-                        # Add to extracted data for frontend table
                         extracted_data.append({
-                            "product_id": int(product_id_raw),
+                            "product_id_raw": product_id_raw,
                             "db_product_id": actual_product_id,
                             "product_name": product_name,
                             "category": category,
                             "current_stock": current_stock,
-                            "units_to_produce": units_to_produce,
                             "restock_date": str(restock_date) if restock_date else None,
                             "dispatch_limit_per_day": dispatch_limit,
                             "warehouse_name": warehouse_name
@@ -359,73 +312,45 @@ def get_all_inventory(db: Session = Depends(get_db)):
 
 @router.delete("/warehouse/{warehouse_id}")
 def delete_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
-    """Delete a warehouse and all its inventory"""
-    warehouse = db.query(Warehouse).filter(
-        Warehouse.id == warehouse_id
-    ).first()
-    if not warehouse:
+    wh = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    if not wh:
         raise HTTPException(status_code=404, detail="Warehouse not found")
-
-    # Delete inventory first
-    db.query(Inventory).filter(
-        Inventory.warehouse_id == warehouse_id
-    ).delete()
-
-    # Delete warehouse
-    db.delete(warehouse)
+    db.query(Inventory).filter(Inventory.warehouse_id == warehouse_id).delete()
+    db.delete(wh)
     db.commit()
-
-    return {"message": f"✅ Warehouse '{warehouse.name}' deleted successfully!"}
+    return {"message": f"✅ Warehouse '{wh.name}' deleted!"}
 
 
 @router.delete("/product/{product_id}")
 def delete_product(product_id: int, db: Session = Depends(get_db)):
-    """Delete a product and all its inventory records"""
-    product = db.query(Product).filter(
-        Product.id == product_id
-    ).first()
+    product = db.query(Product).filter(Product.id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-
-    # Delete inventory first
-    db.query(Inventory).filter(
-        Inventory.product_id == product_id
-    ).delete()
-
-    # Delete product
+    db.query(Inventory).filter(Inventory.product_id == product_id).delete()
     db.delete(product)
     db.commit()
-
-    return {"message": f"✅ Product '{product.name}' deleted successfully!"}
+    return {"message": f"✅ Product '{product.name}' deleted!"}
 
 
 @router.delete("/inventory/{inventory_id}")
 def delete_inventory(inventory_id: int, db: Session = Depends(get_db)):
-    """Delete a single inventory record"""
-    inv = db.query(Inventory).filter(
-        Inventory.id == inventory_id
-    ).first()
+    inv = db.query(Inventory).filter(Inventory.id == inventory_id).first()
     if not inv:
-        raise HTTPException(status_code=404, detail="Inventory record not found")
-
+        raise HTTPException(status_code=404, detail="Inventory not found")
     db.delete(inv)
     db.commit()
-
     return {"message": f"✅ Inventory record #{inventory_id} deleted!"}
 
 
 @router.delete("/clear/all")
 def clear_all_data(db: Session = Depends(get_db)):
-    """⚠️ Delete ALL data from database (warehouses, products, inventory)"""
-    inv_count = db.query(Inventory).count()
+    inv_count  = db.query(Inventory).count()
     prod_count = db.query(Product).count()
-    wh_count = db.query(Warehouse).count()
-
+    wh_count   = db.query(Warehouse).count()
     db.query(Inventory).delete()
     db.query(Product).delete()
     db.query(Warehouse).delete()
     db.commit()
-
     return {
         "message": "✅ All data cleared!",
         "deleted": {
@@ -434,3 +359,12 @@ def clear_all_data(db: Session = Depends(get_db)):
             "inventory_records": inv_count
         }
     }
+
+
+@router.post("/inventory/upload")
+async def upload_inventory_pdf(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Param's frontend endpoint — same as upload-pdf"""
+    return await upload_pdf(file=file, db=db)

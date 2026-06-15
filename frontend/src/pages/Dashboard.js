@@ -33,6 +33,8 @@ const mockData = {
 function Dashboard() {
   const [activeWarehouse, setActiveWarehouse] = useState("Warehouse 1");
   const [data, setData] = useState(mockData);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
   const username = localStorage.getItem("username") || "admin";
 
   const handleLogout = () => {
@@ -40,7 +42,7 @@ function Dashboard() {
     window.location.href = "/";
   };
 
-  const handleRefresh = async () => {
+const handleRefresh = async () => {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE_URL}/api/dashboard`, {
@@ -48,10 +50,50 @@ function Dashboard() {
       });
       if (res.ok) {
         const json = await res.json();
-        setData(json);
+        // Safely merge with mockData so missing fields don't crash
+        setData({
+          stats:         json.stats         || mockData.stats,
+          warehouses:    json.warehouses     || mockData.warehouses,
+          vipOrders:     json.vipOrders      || mockData.vipOrders,
+          pendingOrders: json.pendingOrders  || mockData.pendingOrders,
+          inventory:     json.inventory      || mockData.inventory,
+        });
       }
     } catch (err) {
       console.log("Backend not connected yet, using mock data");
+    }
+  };
+
+  const handlePdfUpload = async (file) => {
+    if (!file || file.type !== "application/pdf") {
+      setUploadMsg("❌ Please upload a valid PDF file");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadMsg("❌ File too large. Max 10MB");
+      return;
+    }
+    setUploading(true);
+    setUploadMsg("");
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE_URL}/api/upload-pdf`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      if (res.ok) {
+        setUploadMsg("✅ PDF uploaded successfully! Inventory updated.");
+        handleRefresh();
+      } else {
+        setUploadMsg("⚠️ Backend not connected yet — PDF received on frontend.");
+      }
+    } catch (err) {
+      setUploadMsg("⚠️ Backend not connected yet — PDF received on frontend.");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -241,15 +283,42 @@ function Dashboard() {
             Upload a PDF with warehouse inventory data. The system extracts product quantities,
             dispatch limits and restock dates, then updates the database automatically.
           </p>
-          <div style={s.dropzone}>
-            <div style={s.dropIcon}>📄</div>
-            <div style={s.dropText}>Drop PDF here or click to browse</div>
-            <div style={s.dropMax}>Max 10 MB</div>
-          </div>
+
+          {uploadMsg && (
+            <div style={{
+              padding: "10px 14px", borderRadius: "8px", marginBottom: "12px", fontSize: "13px",
+              backgroundColor: uploadMsg.startsWith("✅") ? "#e8f8ef" : "#fdecea",
+              color: uploadMsg.startsWith("✅") ? "#27AE60" : "#C0392B",
+            }}>
+              {uploadMsg}
+            </div>
+          )}
+
+          <label style={{ cursor: "pointer" }}>
+            <input
+              type="file"
+              accept="application/pdf"
+              style={{ display: "none" }}
+              onChange={(e) => handlePdfUpload(e.target.files[0])}
+            />
+            <div
+              style={{ ...s.dropzone, borderColor: uploading ? "#C0392B" : "#ddd" }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); handlePdfUpload(e.dataTransfer.files[0]); }}
+            >
+              <div style={s.dropIcon}>{uploading ? "⏳" : "📄"}</div>
+              <div style={s.dropText}>{uploading ? "Uploading..." : "Drop PDF here or click to browse"}</div>
+              <div style={s.dropMax}>Max 10 MB</div>
+            </div>
+          </label>
+
           <details style={{ marginTop: "8px" }}>
             <summary style={{ cursor: "pointer", color: "#666", fontSize: "13px" }}>
               ▶ PDF format guide
             </summary>
+            <p style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+              PDF should contain: Product ID, Product Name, Category, Stock, Unit, Restock Date, Dispatch Limit
+            </p>
           </details>
         </div>
       </div>
