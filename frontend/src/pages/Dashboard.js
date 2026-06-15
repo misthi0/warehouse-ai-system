@@ -42,7 +42,7 @@ function Dashboard() {
     window.location.href = "/";
   };
 
-const handleRefresh = async () => {
+  const handleRefresh = async () => {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE_URL}/api/dashboard`, {
@@ -50,14 +50,7 @@ const handleRefresh = async () => {
       });
       if (res.ok) {
         const json = await res.json();
-        // Safely merge with mockData so missing fields don't crash
-        setData({
-          stats:         json.stats         || mockData.stats,
-          warehouses:    json.warehouses     || mockData.warehouses,
-          vipOrders:     json.vipOrders      || mockData.vipOrders,
-          pendingOrders: json.pendingOrders  || mockData.pendingOrders,
-          inventory:     json.inventory      || mockData.inventory,
-        });
+        setData(json);
       }
     } catch (err) {
       console.log("Backend not connected yet, using mock data");
@@ -79,7 +72,7 @@ const handleRefresh = async () => {
     formData.append("file", file);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/upload-pdf`, {
+      const res = await fetch(`${API_BASE_URL}/api/inventory/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
