@@ -14,7 +14,6 @@ router = APIRouter()
 # ── HELPER FUNCTIONS ──────────────────────────────────────────
 
 def extract_date(text):
-    """Extract date in YYYY-MM-DD format from any text"""
     if not text:
         return None
     match = re.search(r'\d{4}-\d{2}-\d{2}', str(text))
@@ -26,14 +25,12 @@ def extract_date(text):
     return None
 
 def extract_number(text):
-    """Extract first number from any text"""
     if not text:
         return 0
     match = re.search(r'\d+', str(text))
     return int(match.group()) if match else 0
 
 def is_header_row(row):
-    """Check if a table row is a header row"""
     if not row:
         return False
     header_keywords = ['product', 'name', 'category', 'stock',
@@ -43,10 +40,6 @@ def is_header_row(row):
     return matches >= 2
 
 def find_warehouses_in_text(full_text):
-    """
-    Find ALL warehouse names from PDF text.
-    Works for simple 'Warehouse 1' or 'Warehouse 1 — Delhi North' formats.
-    """
     warehouses = []
     seen_names = set()
     lines = full_text.split('\n')
@@ -54,14 +47,12 @@ def find_warehouses_in_text(full_text):
         line = line.strip()
         if not line:
             continue
-        # Match "Warehouse 1", "Warehouse 2", etc. anywhere in line
         match = re.search(r'(Warehouse\s*\d+)', line, re.IGNORECASE)
         if match:
             name = match.group(1).strip()
             name = re.sub(r'\s+', ' ', name)
             if name not in seen_names:
                 seen_names.add(name)
-                # Extract location after separator if present, else use name
                 location = name
                 for sep in ['—', ' - ', ':']:
                     if sep in line:
@@ -71,7 +62,6 @@ def find_warehouses_in_text(full_text):
     return warehouses
 
 def is_product_table(table):
-    """Check if a table contains product/inventory data"""
     if not table or len(table) < 2:
         return False
     first_row = [str(c).lower().strip() if c else '' for c in table[0]]
@@ -87,10 +77,6 @@ async def upload_pdf(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Upload ANY warehouse PDF.
-    Automatically detects warehouses, products, and inventory.
-    """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files allowed!")
 
@@ -109,8 +95,6 @@ async def upload_pdf(
         extracted_data = []
 
         with pdfplumber.open(tmp_path) as pdf:
-
-            # Step 1: Extract ALL text and ALL product tables
             full_text = ""
             all_product_tables = []
 
@@ -118,28 +102,25 @@ async def upload_pdf(
                 text = page.extract_text()
                 if text:
                     full_text += text + "\n"
-
                 tables = page.extract_tables()
                 for table in tables:
                     if is_product_table(table):
                         all_product_tables.append(table)
 
-            # Step 2: Find all warehouses
             warehouse_list = find_warehouses_in_text(full_text)
 
             if not warehouse_list:
                 raise HTTPException(
                     status_code=400,
-                    detail="No warehouses found in PDF! Make sure PDF contains 'Warehouse 1', 'Warehouse 2' etc."
+                    detail="No warehouses found in PDF!"
                 )
 
-            # Step 3: Create/update warehouses in DB
+            # Create/update warehouses
             warehouse_db_ids = []
             for (wh_name, wh_location) in warehouse_list:
                 existing = db.query(Warehouse).filter(
                     Warehouse.name == wh_name
                 ).first()
-
                 if not existing:
                     wh = Warehouse(name=wh_name, location=wh_location)
                     db.add(wh)
@@ -153,7 +134,7 @@ async def upload_pdf(
                     warehouse_db_ids.append(existing.id)
                     warehouses_updated += 1
 
-            # Step 4: Process each table and match to warehouse
+            # Process each table
             for idx, table in enumerate(all_product_tables):
                 if idx >= len(warehouse_db_ids):
                     errors.append(f"Table {idx+1} has no matching warehouse")
@@ -163,23 +144,24 @@ async def upload_pdf(
                 warehouse_name = warehouse_list[idx][0]
 
                 for row_idx, row in enumerate(table):
-                    # Skip header rows
                     if row_idx == 0 or is_header_row(row):
                         continue
-
-                    if not row or len(row) < 4:
+                    if not row or len(row) < 7:
                         continue
 
                     try:
-                        # Extract fields — handles P001, 001, or 1 style IDs
-                        product_id_raw = str(row[0]).strip() if row[0] else ''
-                        product_name   = str(row[1]).strip() if row[1] else ''
-                        category       = str(row[2]).strip() if row[2] else 'General'
-                        current_stock  = extract_number(row[3]) if len(row) > 3 else 0
-                        restock_date   = extract_date(row[4]) if len(row) > 4 else None
-                        dispatch_limit = extract_number(row[5]) if len(row) > 5 else 50
+                        # 7-column mapping:
+                        # 0=Product ID, 1=Product Name, 2=Category,
+                        # 3=Current Stock, 4=Units to Produce,
+                        # 5=Restock Date, 6=Dispatch Limit/Day
+                        product_id_raw   = str(row[0]).strip() if row[0] else ''
+                        product_name     = str(row[1]).strip() if row[1] else ''
+                        category         = str(row[2]).strip() if row[2] else 'General'
+                        current_stock    = extract_number(row[3]) if len(row) > 3 else 0
+                        units_to_produce = extract_number(row[4]) if len(row) > 4 else 0
+                        restock_date     = extract_date(row[5]) if len(row) > 5 else None
+                        dispatch_limit   = extract_number(row[6]) if len(row) > 6 else 50
 
-                        # Skip only truly empty rows, allow P001 style IDs
                         if not product_name or product_name.lower() in ['none', 'null', '']:
                             continue
                         if not product_id_raw or product_id_raw.lower() in ['none', 'null', '']:
@@ -216,9 +198,11 @@ async def upload_pdf(
                             inv = Inventory(
                                 warehouse_id=warehouse_id,
                                 product_id=actual_product_id,
+                                pdf_product_id=product_id_raw,
                                 available_quantity=current_stock,
                                 dispatch_limit=dispatch_limit,
                                 dispatched_today=0,
+                                units_to_produce=units_to_produce,
                                 restock_date=restock_date
                             )
                             db.add(inv)
@@ -230,17 +214,20 @@ async def upload_pdf(
                             existing_inv.available_quantity = current_stock
                             existing_inv.dispatch_limit = dispatch_limit
                             existing_inv.restock_date = restock_date
+                            existing_inv.units_to_produce = units_to_produce
+                            existing_inv.pdf_product_id = product_id_raw
                             db.commit()
                             inventory_updated += 1
                             inventory_record_id = existing_inv.id
 
                         extracted_data.append({
                             "inventory_id": inventory_record_id,
-                            "product_id_raw": product_id_raw,
+                            "product_id": product_id_raw,
                             "db_product_id": actual_product_id,
                             "product_name": product_name,
                             "category": category,
                             "current_stock": current_stock,
+                            "units_to_produce": units_to_produce,
                             "restock_date": str(restock_date) if restock_date else None,
                             "dispatch_limit_per_day": dispatch_limit,
                             "warehouse_id": warehouse_id,
@@ -280,7 +267,6 @@ async def upload_pdf(
 
 @router.get("/inventory/all")
 def get_all_inventory(db: Session = Depends(get_db)):
-    """View ALL data stored in database"""
     warehouses = db.query(Warehouse).all()
     result = []
     for wh in warehouses:
@@ -295,10 +281,12 @@ def get_all_inventory(db: Session = Depends(get_db)):
             if product:
                 products.append({
                     "inventory_id": inv.id,
-                    "product_id": product.id,
+                    "product_id": inv.pdf_product_id or str(product.id),
+                    "db_product_id": product.id,
                     "product_name": product.name,
                     "category": product.description,
                     "available_quantity": inv.available_quantity,
+                    "units_to_produce": inv.units_to_produce,
                     "dispatch_limit": inv.dispatch_limit,
                     "dispatched_today": inv.dispatched_today,
                     "restock_date": str(inv.restock_date) if inv.restock_date else None

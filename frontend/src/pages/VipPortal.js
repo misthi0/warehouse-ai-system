@@ -1,29 +1,14 @@
-import React, { useState } from "react";
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
-
-const mockProducts = [
-  { id: "P001", name: "Laptop Pro 15" },
-  { id: "P002", name: "Wireless Mouse" },
-  { id: "P003", name: "USB-C Hub" },
-  { id: "P004", name: "Mechanical Keyboard" },
-  { id: "P005", name: "Monitor 27\"" },
-  { id: "P006", name: "Webcam HD" },
-];
-
-const mockOrders = [
-  { id: 3, product: "Laptop Pro 15", qty: 1,   warehouse: "Warehouse 1", status: "dispatched", wait: "—" },
-  { id: 2, product: "Laptop Pro 15", qty: 500, warehouse: "—",           status: "pending",    wait: "5d" },
-  { id: 1, product: "Laptop Pro 15", qty: 3,   warehouse: "Warehouse 1", status: "dispatched", wait: "—" },
-];
+import React, { useState, useEffect } from "react";
+import API_BASE_URL from "../config";
 
 function VipPortal() {
-  const [search, setSearch]       = useState("");
-  const [product, setProduct]     = useState("Laptop Pro 15");
-  const [quantity, setQuantity]   = useState(1);
-  const [orders, setOrders]       = useState(mockOrders);
-  const [result, setResult]       = useState(null);
-  const [loading, setLoading]     = useState(false);
+  const [search, setSearch]     = useState("");
+  const [products, setProducts] = useState([]);
+  const [product, setProduct]   = useState(null);
+  const [quantity, setQuantity] = useState(1);
+  const [orders, setOrders]     = useState([]);
+  const [result, setResult]     = useState(null);
+  const [loading, setLoading]   = useState(false);
   const username = localStorage.getItem("username") || "admin";
 
   const handleLogout = () => {
@@ -31,33 +16,75 @@ function VipPortal() {
     window.location.href = "/";
   };
 
-  const filteredProducts = mockProducts.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${API_BASE_URL}/api/products`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setProducts(data);
+          if (data.length > 0) setProduct(data[0]);
+        }
+      } catch (err) {
+        console.error("Could not fetch products:", err);
+      }
+    };
+    fetchProducts();
+  }, []);
+
+  const filteredProducts = products.filter(p =>
+    p.product_name.toLowerCase().includes(search.toLowerCase())
   );
 
   const handleOrder = async (e) => {
     e.preventDefault();
+    if (!product) return;
     setLoading(true);
     setResult(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/orders/vip`, {
+
+      // Step 1: Create VIP order
+      const orderRes = await fetch(`${API_BASE_URL}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ product, quantity, type: "vip" }),
+        body: JSON.stringify({
+          customer_name: username,
+          product_id: product.db_product_id,
+          quantity: parseInt(quantity),
+          is_vip: true  // ← VIP = true
+        }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setResult(data);
-        setOrders(prev => [{ id: prev.length + 1, product, qty: quantity, warehouse: data.warehouse, status: data.status, wait: "—" }, ...prev]);
-      } else {
-        throw new Error("Backend not connected");
-      }
-    } catch {
-      // Mock response jab backend nahi hai
-      const mockResult = { warehouse: "Warehouse 1", status: "dispatched" };
-      setResult(mockResult);
-      setOrders(prev => [{ id: prev.length + 1, product, qty: quantity, warehouse: mockResult.warehouse, status: mockResult.status, wait: "—" }, ...prev]);
+      const orderData = await orderRes.json();
+
+      // Step 2: Dispatch VIP order
+      const dispatchRes = await fetch(`${API_BASE_URL}/api/dispatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          customer_name: username,
+          product_id: product.db_product_id,
+          quantity: parseInt(quantity),
+          is_vip: true  // ← VIP = true
+        }),
+      });
+      const dispatchData = await dispatchRes.json();
+
+      setResult(dispatchData);
+      setOrders(prev => [{
+        id: orderData.id,
+        product: product.product_name,
+        qty: quantity,
+        warehouse: dispatchData.warehouse_name || "—",
+        status: dispatchData.status === "APPROVED" ? "dispatched" : "pending",
+        wait: dispatchData.status === "APPROVED" ? "—" : dispatchData.message
+      }, ...prev]);
+
+    } catch (err) {
+      console.error("VIP order failed:", err);
     } finally {
       setLoading(false);
     }
@@ -88,9 +115,7 @@ function VipPortal() {
         </div>
       </div>
 
-      {/* Body */}
       <div style={s.body}>
-        {/* Header */}
         <div style={s.headerRow}>
           <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
             <span style={s.starIcon}>⭐</span>
@@ -99,20 +124,17 @@ function VipPortal() {
               <p style={s.subheading}>
                 As a VIP customer, your orders receive{" "}
                 <span style={{ color: "#8E44AD", fontWeight: "700" }}>highest priority</span>
-                {" "}and are processed before regular orders. The system allocates maximum dispatch capacity for VIP orders.
+                {" "}and are processed before regular orders.
               </p>
             </div>
           </div>
         </div>
 
-        {/* VIP Priority Banner */}
         <div style={s.banner}>
           ⚡ <strong>VIP Priority Rules:</strong> VIP orders are matched to warehouses with the highest remaining dispatch capacity. Your orders skip the standard queue and are fulfilled first.
         </div>
 
-        {/* Two Column Layout */}
         <div style={s.row2}>
-          {/* Place VIP Order */}
           <div style={s.card}>
             <h3 style={s.cardTitle}>🛒 Place VIP Order</h3>
 
@@ -129,12 +151,12 @@ function VipPortal() {
             </div>
 
             <select
-              value={product}
-              onChange={(e) => setProduct(e.target.value)}
+              value={product?.db_product_id || ""}
+              onChange={(e) => setProduct(products.find(p => p.db_product_id === parseInt(e.target.value)))}
               style={s.select}
             >
               {filteredProducts.map(p => (
-                <option key={p.id} value={p.name}>{p.name}</option>
+                <option key={p.db_product_id} value={p.db_product_id}>{p.product_name}</option>
               ))}
             </select>
 
@@ -151,56 +173,56 @@ function VipPortal() {
               {loading ? "Processing..." : "⭐ Place VIP Order"}
             </button>
 
-            {/* Result */}
             {result && (
               <div style={s.resultCard}>
-                <div style={s.resultTitle}>✅ VIP Order {result.status === "dispatched" ? "Dispatched!" : "Placed!"}</div>
+                <div style={s.resultTitle}>
+                  {result.status === "APPROVED" ? "✅ VIP Order Dispatched!" : "⏰ VIP Order Pending"}
+                </div>
                 <div style={s.resultSub}>
-                  Order {result.status === "dispatched" ? `dispatched from ${result.warehouse}` : "is pending — stock unavailable"}.
+                  {result.status === "APPROVED"
+                    ? `Dispatched from ${result.warehouse_name}`
+                    : result.message}
                 </div>
                 <div style={s.resultBox}>
-                  {result.status === "dispatched"
-                    ? `Dispatched from: ${result.warehouse}`
-                    : "No warehouse available right now"}
+                  {result.status === "APPROVED"
+                    ? `Estimated dispatch: ${result.estimated_dispatch_date}`
+                    : `Expected after: ${result.estimated_dispatch_date}`}
                 </div>
-                <div style={s.pdfLink}>⬇️ Download PDF Report</div>
               </div>
             )}
           </div>
 
-          {/* My VIP Orders */}
           <div style={s.card}>
             <h3 style={s.cardTitle}>📦 My VIP Orders</h3>
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  {["ORDER","PRODUCT","QTY","WAREHOUSE","STATUS","WAIT","PDF"].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o, i) => (
-                  <tr key={i}>
-                    <td style={s.td}>#{o.id}</td>
-                    <td style={s.td}>{o.product}</td>
-                    <td style={s.td}>{o.qty}</td>
-                    <td style={s.td}>{o.warehouse}</td>
-                    <td style={s.td}>
-                      <span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>
-                        {o.status}
-                      </span>
-                    </td>
-                    <td style={{ ...s.td, color: o.wait === "—" ? "#aaa" : "#E67E22", fontWeight: "600" }}>
-                      {o.wait}
-                    </td>
-                    <td style={s.td}>
-                      <span style={s.pdfIcon}>⬇️</span>
-                    </td>
+            {orders.length === 0 ? (
+              <p style={{ color: "#aaa", fontSize: "13px" }}>No VIP orders placed yet</p>
+            ) : (
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    {["ORDER","PRODUCT","QTY","WAREHOUSE","STATUS","INFO"].map(h => (
+                      <th key={h} style={s.th}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {orders.map((o, i) => (
+                    <tr key={i}>
+                      <td style={s.td}>#{o.id}</td>
+                      <td style={s.td}>{o.product}</td>
+                      <td style={s.td}>{o.qty}</td>
+                      <td style={s.td}>{o.warehouse}</td>
+                      <td style={s.td}>
+                        <span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>
+                          {o.status}
+                        </span>
+                      </td>
+                      <td style={{ ...s.td, color: "#888", fontSize: "12px" }}>{o.wait}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       </div>
@@ -241,8 +263,7 @@ const s = {
   resultCard:  { marginTop: "16px", backgroundColor: "#f0fff4", border: "1px solid #b2dfdb", borderRadius: "10px", padding: "16px" },
   resultTitle: { fontWeight: "700", fontSize: "15px", color: "#1a7a4a", marginBottom: "4px" },
   resultSub:   { fontSize: "13px", color: "#555", marginBottom: "10px" },
-  resultBox:   { backgroundColor: "#fff", border: "1px solid #ddd", borderRadius: "6px", padding: "10px", fontSize: "13px", marginBottom: "10px" },
-  pdfLink:     { color: "#3B5BDB", fontSize: "13px", cursor: "pointer" },
+  resultBox:   { backgroundColor: "#fff", border: "1px solid #ddd", borderRadius: "6px", padding: "10px", fontSize: "13px" },
   table:       { width: "100%", borderCollapse: "collapse" },
   th:          { textAlign: "left", fontSize: "11px", color: "#999", fontWeight: "600", padding: "6px 8px", borderBottom: "1px solid #eee" },
   td:          { fontSize: "13px", padding: "10px 8px", borderBottom: "1px solid #f5f5f5", color: "#333" },

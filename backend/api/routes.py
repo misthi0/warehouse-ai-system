@@ -81,7 +81,24 @@ def get_warehouse_inventory(warehouse_id: int, db: Session = Depends(get_db)):
     )
     if not inventory:
         raise HTTPException(status_code=404, detail="Warehouse not found")
-    return inventory
+    
+    result = []
+    for inv in inventory:
+        product = db.query(Product).filter(Product.id == inv.product_id).first()
+        result.append({
+            "inventory_id": inv.id,
+            "product_id": inv.pdf_product_id or str(inv.product_id),
+            "db_product_id": inv.product_id,
+            "product_name": product.name if product else None,
+            "category": product.description if product else None,
+            "available_quantity": inv.available_quantity,
+            "units_to_produce": inv.units_to_produce,
+            "dispatch_limit": inv.dispatch_limit,
+            "dispatched_today": inv.dispatched_today,
+            "restock_date": str(inv.restock_date) if inv.restock_date else None,
+            "warehouse_id": inv.warehouse_id
+        })
+    return result
 
 
 # ==========================
@@ -89,7 +106,40 @@ def get_warehouse_inventory(warehouse_id: int, db: Session = Depends(get_db)):
 # ==========================
 @router.get("/products")
 def get_all_products(db: Session = Depends(get_db)):
-    return db.query(Product).all()
+    products = db.query(Product).all()
+    result = []
+    for product in products:
+        # Find all inventory records for this product
+        inventory_records = db.query(Inventory).filter(
+            Inventory.product_id == product.id
+        ).all()
+        
+        warehouses = []
+        for inv in inventory_records:
+            warehouse = db.query(Warehouse).filter(
+                Warehouse.id == inv.warehouse_id
+            ).first()
+            if warehouse:
+                warehouses.append({
+                    "warehouse_id": warehouse.id,
+                    "warehouse_name": warehouse.name,
+                    "location": warehouse.location,
+                    "pdf_product_id": inv.pdf_product_id,
+                    "available_quantity": inv.available_quantity,
+                    "units_to_produce": inv.units_to_produce,
+                    "dispatch_limit": inv.dispatch_limit,
+                    "dispatched_today": inv.dispatched_today,
+                    "restock_date": str(inv.restock_date) if inv.restock_date else None
+                })
+        
+        result.append({
+            "db_product_id": product.id,
+            "product_name": product.name,
+            "category": product.description,
+            "unit_price": float(product.unit_price) if product.unit_price else 0,
+            "warehouses": warehouses
+        })
+    return result
 
 
 # ==========================
