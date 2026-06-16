@@ -43,15 +43,22 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "customer"
+
+
 # ==========================
 # Auth Routes
 # ==========================
-@router.post("/login")
-def login(data: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == data.username).first()
-    if not user or not bcrypt.checkpw(data.password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+@router.post("/auth/login")
+def auth_login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == request.username).first()
+    if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-
+    if not bcrypt.checkpw(request.password.encode("utf-8"), user.hashed_password.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     token = jwt.encode(
         {
             "sub": user.username,
@@ -61,7 +68,31 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         SECRET_KEY,
         algorithm=ALGORITHM
     )
-    return {"access_token": token, "token_type": "bearer", "role": user.role}
+    return {
+        "token": token,
+        "user": {"username": user.username, "role": user.role}
+    }
+
+
+@router.post("/auth/register")
+def auth_register(request: RegisterRequest, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.username == request.username).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    hashed = bcrypt.hashpw(
+        request.password.encode("utf-8"), bcrypt.gensalt()
+    ).decode("utf-8")
+    new_user = User(
+        username=request.username,
+        hashed_password=hashed,
+        role=request.role
+    )
+    db.add(new_user)
+    db.commit()
+    return {
+        "message": "Registered!",
+        "user": {"username": new_user.username, "role": new_user.role}
+    }
 
 
 # ==========================
@@ -81,7 +112,7 @@ def get_warehouse_inventory(warehouse_id: int, db: Session = Depends(get_db)):
     )
     if not inventory:
         raise HTTPException(status_code=404, detail="Warehouse not found")
-    
+
     result = []
     for inv in inventory:
         product = db.query(Product).filter(Product.id == inv.product_id).first()
@@ -109,11 +140,10 @@ def get_all_products(db: Session = Depends(get_db)):
     products = db.query(Product).all()
     result = []
     for product in products:
-        # Find all inventory records for this product
         inventory_records = db.query(Inventory).filter(
             Inventory.product_id == product.id
         ).all()
-        
+
         warehouses = []
         for inv in inventory_records:
             warehouse = db.query(Warehouse).filter(
@@ -131,7 +161,7 @@ def get_all_products(db: Session = Depends(get_db)):
                     "dispatched_today": inv.dispatched_today,
                     "restock_date": str(inv.restock_date) if inv.restock_date else None
                 })
-        
+
         result.append({
             "db_product_id": product.id,
             "product_name": product.name,
@@ -183,19 +213,3 @@ def get_dashboard(db: Session = Depends(get_db)):
         "vip_orders": vip_orders,
         "total_warehouses": warehouses
     }
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-@router.post("/auth/login")
-def login(request: LoginRequest):
-    if request.username == "admin" and request.password == "admin123":
-        return {"token": "admin-token-2024", "user": {"username": "admin", "role": "admin"}}
-    elif request.username == "vip" and request.password == "vip123":
-        return {"token": "vip-token-2024", "user": {"username": "vip", "role": "vip"}}
-    else:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-@router.post("/auth/register")
-def register(request: LoginRequest):
-    return {"message": "Registered!", "user": {"username": request.username}}
