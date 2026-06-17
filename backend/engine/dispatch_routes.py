@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, validator
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional
 from enum import Enum
 import logging
 
 from models.database import SessionLocal
-from models.models import Inventory, Warehouse
+from models.models import Inventory, Warehouse, Order
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -153,6 +153,32 @@ def update_inventory_after_dispatch(
         db.close()
 
 
+# ── 6. Update Order Status After Dispatch ──
+def update_order_status(
+    product_id: int,
+    quantity: int,
+    warehouse_id: int,
+    customer_name: str
+):
+    """Update the most recent matching pending order to approved"""
+    db = SessionLocal()
+    try:
+        order = db.query(Order).filter(
+            Order.product_id == product_id,
+            Order.quantity == quantity,
+            Order.customer_name == customer_name,
+            Order.status == "pending"
+        ).order_by(Order.id.desc()).first()
+
+        if order:
+            order.status = "approved"
+            order.warehouse_id = warehouse_id
+            order.estimated_dispatch_date = date.today()
+            db.commit()
+    finally:
+        db.close()
+
+
 # ── Main Dispatch Endpoint ──
 @router.post("/api/dispatch", response_model=DispatchResponse)
 def dispatch_order(order: OrderRequest) -> DispatchResponse:
@@ -170,11 +196,19 @@ def dispatch_order(order: OrderRequest) -> DispatchResponse:
         best = None
 
     if best:
-        # Update database: deduct stock and increment dispatched_today
+        # Update inventory: deduct stock and increment dispatched_today
         update_inventory_after_dispatch(
             warehouse_id=best["warehouse_id"],
             product_id=order.product_id,
             quantity=order.quantity
+        )
+
+        # Update order status to approved
+        update_order_status(
+            product_id=order.product_id,
+            quantity=order.quantity,
+            warehouse_id=best["warehouse_id"],
+            customer_name=order.customer_name
         )
 
         logger.info(

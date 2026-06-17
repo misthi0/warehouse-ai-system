@@ -1,28 +1,12 @@
-import React, { useState } from "react";
-
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
-
-const mockProducts = [
-  { id: "P001", name: "Laptop Pro 15" },
-  { id: "P002", name: "Wireless Mouse" },
-  { id: "P003", name: "USB-C Hub" },
-  { id: "P004", name: "Mechanical Keyboard" },
-  { id: "P005", name: "Monitor 27\"" },
-  { id: "P006", name: "Webcam HD" },
-];
-
-const mockOrders = [
-  { id: 4, product: "USB-C Hub",    qty: 1,   warehouse: "Warehouse 2", status: "dispatched", info: "2026-06-14" },
-  { id: 3, product: "Laptop Pro 15",qty: 1,   warehouse: "Warehouse 1", status: "dispatched", info: "2026-06-14" },
-  { id: 2, product: "Laptop Pro 15",qty: 500, warehouse: "—",           status: "pending",    info: "5 days wait" },
-  { id: 1, product: "Laptop Pro 15",qty: 3,   warehouse: "Warehouse 1", status: "dispatched", info: "2026-06-14" },
-];
+import React, { useState, useEffect } from "react";
+import API_BASE_URL from "../config";
 
 function OrderPortal() {
   const [search, setSearch]     = useState("");
-  const [product, setProduct]   = useState("USB-C Hub");
+  const [products, setProducts] = useState([]);
+  const [product, setProduct]   = useState(null);
   const [quantity, setQuantity] = useState(1);
-  const [orders, setOrders]     = useState(mockOrders);
+  const [orders, setOrders]     = useState([]);
   const [result, setResult]     = useState(null);
   const [loading, setLoading]   = useState(false);
   const username = localStorage.getItem("username") || "admin";
@@ -32,40 +16,78 @@ function OrderPortal() {
     window.location.href = "/";
   };
 
-  const filteredProducts = mockProducts.filter(p =>
-    p.name.toLowerCase().includes(search.toLowerCase())
+  // Fetch products from backend on load
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch(`${API_BASE_URL}/api/products`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setProducts(data);
+          if (data.length > 0) setProduct(data[0]);
+        }
+      } catch (err) {
+        console.error("Could not fetch products:", err);
+      }
+    };
+    fetchProducts();
+  }, []);
+
+  const filteredProducts = products.filter(p =>
+    p.product_name.toLowerCase().includes(search.toLowerCase())
   );
 
   const handleOrder = async (e) => {
     e.preventDefault();
+    if (!product) return;
     setLoading(true);
     setResult(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/orders`, {
+
+      // Step 1: Create order
+      const orderRes = await fetch(`${API_BASE_URL}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ product, quantity }),
+        body: JSON.stringify({
+          customer_name: username,
+          product_id: product.db_product_id,
+          quantity: parseInt(quantity),
+          is_vip: false
+        }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setResult(data);
-        setOrders(prev => [{
-          id: prev.length + 1, product, qty: quantity,
-          warehouse: data.warehouse, status: data.status,
-          info: data.status === "dispatched" ? new Date().toISOString().split("T")[0] : `${data.waitDays} days wait`
-        }, ...prev]);
-      } else {
-        throw new Error("Backend not connected");
-      }
-    } catch {
-      const mockResult = { warehouse: "Warehouse 2", status: "dispatched" };
-      setResult(mockResult);
+      const orderData = await orderRes.json();
+
+      // Step 2: Dispatch order
+      const dispatchRes = await fetch(`${API_BASE_URL}/api/dispatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          customer_name: username,
+          product_id: product.db_product_id,
+          quantity: parseInt(quantity),
+          is_vip: false
+        }),
+      });
+      const dispatchData = await dispatchRes.json();
+
+      setResult(dispatchData);
       setOrders(prev => [{
-        id: prev.length + 1, product, qty: quantity,
-        warehouse: mockResult.warehouse, status: mockResult.status,
-        info: new Date().toISOString().split("T")[0]
+        id: orderData.id,
+        product: product.product_name,
+        qty: quantity,
+        warehouse: dispatchData.warehouse_name || "—",
+        status: dispatchData.status === "APPROVED" ? "dispatched" : "pending",
+        info: dispatchData.status === "APPROVED"
+          ? dispatchData.estimated_dispatch_date
+          : dispatchData.message
       }, ...prev]);
+
+    } catch (err) {
+      console.error("Order failed:", err);
     } finally {
       setLoading(false);
     }
@@ -96,13 +118,11 @@ function OrderPortal() {
         </div>
       </div>
 
-      {/* Body */}
       <div style={s.body}>
         <h2 style={s.heading}>Order Portal</h2>
         <p style={s.subheading}>Search products and place orders. The system automatically selects the best warehouse.</p>
 
         <div style={s.row2}>
-          {/* Place Order */}
           <div style={s.card}>
             <h3 style={s.cardTitle}>🛒 Place an Order</h3>
 
@@ -119,12 +139,12 @@ function OrderPortal() {
             </div>
 
             <select
-              value={product}
-              onChange={(e) => setProduct(e.target.value)}
+              value={product?.db_product_id || ""}
+              onChange={(e) => setProduct(products.find(p => p.db_product_id === parseInt(e.target.value)))}
               style={s.select}
             >
               {filteredProducts.map(p => (
-                <option key={p.id} value={p.name}>{p.name}</option>
+                <option key={p.db_product_id} value={p.db_product_id}>{p.product_name}</option>
               ))}
             </select>
 
@@ -141,54 +161,56 @@ function OrderPortal() {
               {loading ? "Processing..." : "Place Order"}
             </button>
 
-            {/* Result */}
             {result && (
               <div style={s.resultCard}>
-                <div style={s.resultTitle}>✅ Order {result.status === "dispatched" ? "Dispatched!" : "Placed!"}</div>
+                <div style={s.resultTitle}>
+                  {result.status === "APPROVED" ? "✅ Order Dispatched!" : "⏰ Order Pending"}
+                </div>
                 <div style={s.resultSub}>
-                  Order {result.status === "dispatched" ? `dispatched from ${result.warehouse}` : "is pending — stock unavailable"}.
+                  {result.status === "APPROVED"
+                    ? `Dispatched from ${result.warehouse_name}`
+                    : result.message}
                 </div>
                 <div style={s.resultBox}>
-                  {result.status === "dispatched"
-                    ? `Warehouse: ${result.warehouse}`
-                    : "No warehouse available right now"}
+                  {result.status === "APPROVED"
+                    ? `Estimated dispatch: ${result.estimated_dispatch_date}`
+                    : `Expected after: ${result.estimated_dispatch_date}`}
                 </div>
-                <div style={s.pdfLink}>⬇️ Download PDF Report</div>
               </div>
             )}
           </div>
 
-          {/* My Orders */}
           <div style={s.card}>
             <h3 style={s.cardTitle}>📦 My Orders</h3>
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  {["ORDER","PRODUCT","QTY","WAREHOUSE","STATUS","INFO","PDF"].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o, i) => (
-                  <tr key={i}>
-                    <td style={s.td}>#{o.id}</td>
-                    <td style={s.td}>{o.product}</td>
-                    <td style={s.td}>{o.qty}</td>
-                    <td style={s.td}>{o.warehouse}</td>
-                    <td style={s.td}>
-                      <span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>
-                        {o.status === "dispatched" ? "✅ dispatched" : "⏰ pending"}
-                      </span>
-                    </td>
-                    <td style={{ ...s.td, color: o.info.includes("days") ? "#E67E22" : "#27AE60", fontWeight: "600" }}>
-                      {o.info}
-                    </td>
-                    <td style={s.td}><span style={s.pdfIcon}>⬇️</span></td>
+            {orders.length === 0 ? (
+              <p style={{ color: "#aaa", fontSize: "13px" }}>No orders placed yet</p>
+            ) : (
+              <table style={s.table}>
+                <thead>
+                  <tr>
+                    {["ORDER","PRODUCT","QTY","WAREHOUSE","STATUS","INFO"].map(h => (
+                      <th key={h} style={s.th}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {orders.map((o, i) => (
+                    <tr key={i}>
+                      <td style={s.td}>#{o.id}</td>
+                      <td style={s.td}>{o.product}</td>
+                      <td style={s.td}>{o.qty}</td>
+                      <td style={s.td}>{o.warehouse}</td>
+                      <td style={s.td}>
+                        <span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>
+                          {o.status === "dispatched" ? "✅ dispatched" : "⏰ pending"}
+                        </span>
+                      </td>
+                      <td style={{ ...s.td, color: "#888", fontSize: "12px" }}>{o.info}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       </div>
@@ -226,14 +248,12 @@ const s = {
   resultCard:   { marginTop: "16px", backgroundColor: "#f0fff4", border: "1px solid #b2dfdb", borderRadius: "10px", padding: "16px" },
   resultTitle:  { fontWeight: "700", fontSize: "15px", color: "#1a7a4a", marginBottom: "4px" },
   resultSub:    { fontSize: "13px", color: "#555", marginBottom: "10px" },
-  resultBox:    { backgroundColor: "#fff", border: "1px solid #ddd", borderRadius: "6px", padding: "10px", fontSize: "13px", marginBottom: "10px" },
-  pdfLink:      { color: "#3B5BDB", fontSize: "13px", cursor: "pointer" },
+  resultBox:    { backgroundColor: "#fff", border: "1px solid #ddd", borderRadius: "6px", padding: "10px", fontSize: "13px" },
   table:        { width: "100%", borderCollapse: "collapse" },
   th:           { textAlign: "left", fontSize: "11px", color: "#999", fontWeight: "600", padding: "6px 8px", borderBottom: "1px solid #eee" },
   td:           { fontSize: "13px", padding: "10px 8px", borderBottom: "1px solid #f5f5f5", color: "#333" },
   badgeGreen:   { backgroundColor: "#e8f8ef", color: "#27AE60", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   badgeYellow:  { backgroundColor: "#fef9e7", color: "#F39C12", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
-  pdfIcon:      { color: "#3B5BDB", cursor: "pointer", fontSize: "16px" },
 };
 
 export default OrderPortal;
