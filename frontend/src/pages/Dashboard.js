@@ -1,76 +1,50 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
 
-const mockData = {
-  stats: { totalOrders: 2, dispatchedToday: 1, pendingOrders: 1, vipOrders: 0, unavailable: 0 },
-  warehouses: [
-    { name: "Warehouse 1", dispatched: 3, limit: 380, stock: 1597 },
-    { name: "Warehouse 2", dispatched: 0, limit: 460, stock: 1380 },
-    { name: "Warehouse 3", dispatched: 0, limit: 360, stock: 1090 },
-  ],
-  vipOrders: [
-    { id: 2, product: "Laptop Pro 15", qty: 500, type: "ADMIN", status: "pending",    warehouse: "—" },
-    { id: 1, product: "Laptop Pro 15", qty: 3,   type: "ADMIN", status: "dispatched", warehouse: "Warehouse 1" },
-  ],
-  pendingOrders: [
-    { id: 2, product: "Laptop Pro 15", qty: 500, type: "ADMIN", days: 5, date: "2026-06-19" },
-  ],
-  inventory: {
-    "Warehouse 1": [
-      { id: "P001", product: "Wireless Mouse",      category: "Electronics", stock: 500, unit: "pcs", restock: "—",          limit: 100 },
-      { id: "P002", product: "USB-C Hub",            category: "Electronics", stock: 300, unit: "pcs", restock: "—",          limit: 80  },
-      { id: "P003", product: "Mechanical Keyboard",  category: "Electronics", stock: 150, unit: "pcs", restock: "2026-06-19", limit: 40  },
-      { id: "P004", product: 'Monitor 27"',          category: "Electronics", stock: 80,  unit: "pcs", restock: "—",          limit: 20  },
-      { id: "P005", product: "Webcam HD",            category: "Electronics", stock: 250, unit: "pcs", restock: "—",          limit: 60  },
-      { id: "P006", product: "Headphones Pro",       category: "Electronics", stock: 120, unit: "pcs", restock: "2026-06-17", limit: 30  },
-    ],
-    "Warehouse 2": [],
-    "Warehouse 3": [],
-  },
-};
-
-const mockRegRequests = [
-  { id: 1, username: "rahul_sharma", mobile: "+91 9876543210", role: "vip",      date: "2026-06-15", status: "pending" },
-  { id: 2, username: "priya_singh",  mobile: "+91 8765432109", role: "customer", date: "2026-06-15", status: "pending" },
-];
-
-const mockOrderRequests = [
-  { id: 1, username: "rahul_sharma", product: "Laptop Pro 15",  qty: 2, type: "vip",      date: "2026-06-15", status: "pending" },
-  { id: 2, username: "priya_singh",  product: "Wireless Mouse", qty: 5, type: "customer", date: "2026-06-15", status: "pending" },
-];
-
 function Dashboard() {
   const [activeWarehouse, setActiveWarehouse] = useState("Warehouse 1");
-  const [data, setData] = useState(mockData);
+  const [stats, setStats] = useState({ totalOrders: 0, dispatchedToday: 0, pendingOrders: 0, vipOrders: 0, unavailable: 0 });
+  const [warehouses, setWarehouses] = useState([]);
+  const [vipOrders, setVipOrders] = useState([]);
+  const [pendingOrders, setPendingOrders] = useState([]);
+  const [inventory, setInventory] = useState({ "Warehouse 1": [], "Warehouse 2": [], "Warehouse 3": [] });
+  const [regRequests, setRegRequests] = useState([]);
+  const [orderRequests, setOrderRequests] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
-  const [regRequests, setRegRequests] = useState(mockRegRequests);
-  const [orderRequests, setOrderRequests] = useState(mockOrderRequests);
   const username = localStorage.getItem("username") || "admin";
+
+  const token = localStorage.getItem("token");
+  const headers = { Authorization: `Bearer ${token}` };
 
   const handleLogout = () => { localStorage.clear(); window.location.href = "/"; };
 
-  const handleRefresh = async () => {
+  const fetchAll = async () => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/api/dashboard`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await fetch(`${API_BASE_URL}/api/dashboard`, { headers });
       if (res.ok) {
         const json = await res.json();
-        setData({
-          stats:         json.stats         || mockData.stats,
-          warehouses:    json.warehouses     || mockData.warehouses,
-          vipOrders:     json.vipOrders      || mockData.vipOrders,
-          pendingOrders: json.pendingOrders  || mockData.pendingOrders,
-          inventory:     json.inventory      || mockData.inventory,
-        });
-        if (json.regRequests)   setRegRequests(json.regRequests);
-        if (json.orderRequests) setOrderRequests(json.orderRequests);
+        setStats(json.stats || {});
+        setWarehouses(json.warehouses || []);
+        setVipOrders(json.vipOrders || []);
+        setPendingOrders(json.pendingOrders || []);
+        setInventory(json.inventory || { "Warehouse 1": [], "Warehouse 2": [], "Warehouse 3": [] });
       }
-    } catch (err) { console.log("Backend not connected yet"); }
+    } catch { console.log("Dashboard fetch failed"); }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/registrations`, { headers });
+      if (res.ok) setRegRequests(await res.json());
+    } catch { console.log("Reg requests fetch failed"); }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/orders`, { headers });
+      if (res.ok) setOrderRequests(await res.json());
+    } catch { console.log("Order requests fetch failed"); }
   };
+
+  useEffect(() => { fetchAll(); }, []);
 
   const handlePdfUpload = async (file) => {
     if (!file || file.type !== "application/pdf") { setUploadMsg("❌ Please upload a valid PDF file"); return; }
@@ -79,42 +53,39 @@ function Dashboard() {
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE_URL}/api/inventory/upload`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}` }, body: formData,
+        method: "POST", headers, body: formData,
       });
-      if (res.ok) { setUploadMsg("✅ PDF uploaded successfully!"); handleRefresh(); }
-      else setUploadMsg("⚠️ Backend not connected yet.");
-    } catch { setUploadMsg("⚠️ Backend not connected yet."); }
+      if (res.ok) { setUploadMsg("✅ PDF uploaded successfully!"); fetchAll(); }
+      else setUploadMsg("⚠️ Upload failed.");
+    } catch { setUploadMsg("⚠️ Backend not connected."); }
     finally { setUploading(false); }
   };
 
   const handleRegAction = async (id, action) => {
     try {
-      const token = localStorage.getItem("token");
       await fetch(`${API_BASE_URL}/api/admin/registrations/${id}/${action}`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}` },
+        method: "POST", headers,
       });
-    } catch { console.log("Backend not connected, updating locally"); }
-    setRegRequests(prev => prev.map(r => r.id === id ? { ...r, status: action } : r));
+      setRegRequests(prev => prev.map(r => r.id === id ? { ...r, status: action } : r));
+    } catch { console.log("Action failed"); }
   };
 
   const handleOrderAction = async (id, action) => {
     try {
-      const token = localStorage.getItem("token");
       await fetch(`${API_BASE_URL}/api/admin/orders/${id}/${action}`, {
-        method: "POST", headers: { Authorization: `Bearer ${token}` },
+        method: "POST", headers,
       });
-    } catch { console.log("Backend not connected, updating locally"); }
-    setOrderRequests(prev => prev.map(o => o.id === id ? { ...o, status: action } : o));
+      setOrderRequests(prev => prev.map(o => o.id === id ? { ...o, status: action } : o));
+    } catch { console.log("Action failed"); }
   };
 
   const statCards = [
-    { icon: "📦", color: "#C0392B", bg: "#fde8e8", label: "Total Orders",     value: data.stats.totalOrders },
-    { icon: "✅", color: "#27AE60", bg: "#e8f8ef", label: "Dispatched Today", value: data.stats.dispatchedToday },
-    { icon: "⏰", color: "#F39C12", bg: "#fef9e7", label: "Pending Orders",   value: data.stats.pendingOrders },
-    { icon: "⭐", color: "#8E44AD", bg: "#f5eef8", label: "VIP Orders",       value: data.stats.vipOrders },
-    { icon: "⚠️", color: "#E74C3C", bg: "#fdecea", label: "Unavailable",      value: data.stats.unavailable },
+    { icon: "📦", color: "#C0392B", bg: "#fde8e8", label: "Total Orders",     value: stats.totalOrders },
+    { icon: "✅", color: "#27AE60", bg: "#e8f8ef", label: "Dispatched Today", value: stats.dispatchedToday },
+    { icon: "⏰", color: "#F39C12", bg: "#fef9e7", label: "Pending Orders",   value: stats.pendingOrders },
+    { icon: "⭐", color: "#8E44AD", bg: "#f5eef8", label: "VIP Orders",       value: stats.vipOrders },
+    { icon: "⚠️", color: "#E74C3C", bg: "#fdecea", label: "Unavailable",      value: stats.unavailable },
   ];
 
   return (
@@ -149,7 +120,7 @@ function Dashboard() {
             <h2 style={s.heading}>Admin Dashboard</h2>
             <p style={s.subheading}>Real-time overview of all Aditya Birla Carbon warehouse operations</p>
           </div>
-          <button onClick={handleRefresh} style={s.refreshBtn}>↻ Refresh</button>
+          <button onClick={fetchAll} style={s.refreshBtn}>↻ Refresh</button>
         </div>
 
         {/* Stat Cards */}
@@ -158,14 +129,14 @@ function Dashboard() {
             <div key={i} style={s.statCard}>
               <div style={{ ...s.statIcon, backgroundColor: c.bg, color: c.color }}>{c.icon}</div>
               <div>
-                <div style={s.statValue}>{c.value}</div>
+                <div style={s.statValue}>{c.value ?? "—"}</div>
                 <div style={s.statLabel}>{c.label}</div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* ✅ Registration Requests */}
+        {/* Registration Requests */}
         <div style={{ ...s.card, marginBottom: "24px" }}>
           <h3 style={s.cardTitle}>
             👤 Registration Requests
@@ -173,45 +144,42 @@ function Dashboard() {
               <span style={s.badgeRed}>{regRequests.filter(r => r.status === "pending").length} pending</span>
             )}
           </h3>
-          <table style={s.table}>
-            <thead>
-              <tr>
-                {["ID","USERNAME","MOBILE","ROLE","DATE","STATUS","ACTION"].map(h => (
-                  <th key={h} style={s.th}>{h}</th>
+          {regRequests.length === 0 ? (
+            <p style={s.emptyText}>No registration requests yet.</p>
+          ) : (
+            <table style={s.table}>
+              <thead>
+                <tr>{["ID","USERNAME","MOBILE","ROLE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {regRequests.map((r, i) => (
+                  <tr key={i}>
+                    <td style={s.td}>#{r.id}</td>
+                    <td style={{ ...s.td, fontWeight: "600" }}>{r.username}</td>
+                    <td style={s.td}>{r.mobile}</td>
+                    <td style={s.td}><span style={r.role === "vip" ? s.badgePurple : s.badgeBlue}>{r.role?.toUpperCase()}</span></td>
+                    <td style={s.td}>{r.date}</td>
+                    <td style={s.td}>
+                      <span style={r.status === "approved" ? s.badgeGreen : r.status === "rejected" ? s.badgeRejected : s.badgeYellow}>
+                        {r.status}
+                      </span>
+                    </td>
+                    <td style={s.td}>
+                      {r.status === "pending" ? (
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button onClick={() => handleRegAction(r.id, "approved")} style={s.approveBtn}>✅ Approve</button>
+                          <button onClick={() => handleRegAction(r.id, "rejected")} style={s.rejectBtn}>❌ Reject</button>
+                        </div>
+                      ) : <span style={{ color: "#aaa", fontSize: "12px" }}>Done</span>}
+                    </td>
+                  </tr>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {regRequests.map((r, i) => (
-                <tr key={i}>
-                  <td style={s.td}>#{r.id}</td>
-                  <td style={{ ...s.td, fontWeight: "600" }}>{r.username}</td>
-                  <td style={s.td}>{r.mobile}</td>
-                  <td style={s.td}>
-                    <span style={r.role === "vip" ? s.badgePurple : s.badgeBlue}>{r.role.toUpperCase()}</span>
-                  </td>
-                  <td style={s.td}>{r.date}</td>
-                  <td style={s.td}>
-                    <span style={r.status === "approved" ? s.badgeGreen : r.status === "rejected" ? s.badgeRejected : s.badgeYellow}>
-                      {r.status}
-                    </span>
-                  </td>
-                  <td style={s.td}>
-                    {r.status === "pending" && (
-                      <div style={{ display: "flex", gap: "6px" }}>
-                        <button onClick={() => handleRegAction(r.id, "approved")} style={s.approveBtn}>✅ Approve</button>
-                        <button onClick={() => handleRegAction(r.id, "rejected")} style={s.rejectBtn}>❌ Reject</button>
-                      </div>
-                    )}
-                    {r.status !== "pending" && <span style={{ color: "#aaa", fontSize: "12px" }}>Done</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          )}
         </div>
 
-        {/* ✅ Order Approval Requests */}
+        {/* Order Approval Requests */}
         <div style={{ ...s.card, marginBottom: "24px" }}>
           <h3 style={s.cardTitle}>
             🛒 Order Approval Requests
@@ -219,50 +187,47 @@ function Dashboard() {
               <span style={s.badgeRed}>{orderRequests.filter(o => o.status === "pending").length} pending</span>
             )}
           </h3>
-          <table style={s.table}>
-            <thead>
-              <tr>
-                {["ORDER","USER","PRODUCT","QTY","TYPE","DATE","STATUS","ACTION"].map(h => (
-                  <th key={h} style={s.th}>{h}</th>
+          {orderRequests.length === 0 ? (
+            <p style={s.emptyText}>No order requests yet.</p>
+          ) : (
+            <table style={s.table}>
+              <thead>
+                <tr>{["ORDER","USER","PRODUCT","QTY","TYPE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {orderRequests.map((o, i) => (
+                  <tr key={i}>
+                    <td style={s.td}>#{o.id}</td>
+                    <td style={{ ...s.td, fontWeight: "600" }}>{o.username}</td>
+                    <td style={s.td}>{o.product}</td>
+                    <td style={s.td}>{o.qty}</td>
+                    <td style={s.td}><span style={o.type === "vip" ? s.badgePurple : s.badgeBlue}>{o.type?.toUpperCase()}</span></td>
+                    <td style={s.td}>{o.date}</td>
+                    <td style={s.td}>
+                      <span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : s.badgeYellow}>
+                        {o.status}
+                      </span>
+                    </td>
+                    <td style={s.td}>
+                      {o.status === "pending" ? (
+                        <div style={{ display: "flex", gap: "6px" }}>
+                          <button onClick={() => handleOrderAction(o.id, "approved")} style={s.approveBtn}>✅ Approve</button>
+                          <button onClick={() => handleOrderAction(o.id, "rejected")} style={s.rejectBtn}>❌ Reject</button>
+                        </div>
+                      ) : <span style={{ color: "#aaa", fontSize: "12px" }}>Done</span>}
+                    </td>
+                  </tr>
                 ))}
-              </tr>
-            </thead>
-            <tbody>
-              {orderRequests.map((o, i) => (
-                <tr key={i}>
-                  <td style={s.td}>#{o.id}</td>
-                  <td style={{ ...s.td, fontWeight: "600" }}>{o.username}</td>
-                  <td style={s.td}>{o.product}</td>
-                  <td style={s.td}>{o.qty}</td>
-                  <td style={s.td}>
-                    <span style={o.type === "vip" ? s.badgePurple : s.badgeBlue}>{o.type.toUpperCase()}</span>
-                  </td>
-                  <td style={s.td}>{o.date}</td>
-                  <td style={s.td}>
-                    <span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : s.badgeYellow}>
-                      {o.status}
-                    </span>
-                  </td>
-                  <td style={s.td}>
-                    {o.status === "pending" && (
-                      <div style={{ display: "flex", gap: "6px" }}>
-                        <button onClick={() => handleOrderAction(o.id, "approved")} style={s.approveBtn}>✅ Approve</button>
-                        <button onClick={() => handleOrderAction(o.id, "rejected")} style={s.rejectBtn}>❌ Reject</button>
-                      </div>
-                    )}
-                    {o.status !== "pending" && <span style={{ color: "#aaa", fontSize: "12px" }}>Done</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Warehouse Utilization + VIP Orders */}
         <div style={s.row2}>
           <div style={s.card}>
             <h3 style={s.cardTitle}>⚡ Warehouse Utilization</h3>
-            {data.warehouses.map((w, i) => {
+            {warehouses.length === 0 ? <p style={s.emptyText}>No data yet.</p> : warehouses.map((w, i) => {
               const pct = w.limit > 0 ? ((w.dispatched / w.limit) * 100).toFixed(1) : 0;
               return (
                 <div key={i} style={{ marginBottom: "16px" }}>
@@ -270,43 +235,41 @@ function Dashboard() {
                     <span style={s.whName}>{w.name}</span>
                     <span style={s.whDispatch}>{w.dispatched}/{w.limit} dispatched</span>
                   </div>
-                  <div style={s.progressBg}>
-                    <div style={{ ...s.progressFill, width: `${pct}%` }} />
-                  </div>
+                  <div style={s.progressBg}><div style={{ ...s.progressFill, width: `${pct}%` }} /></div>
                   <div style={s.whPct}>{pct}%</div>
-                  <div style={s.whStock}>Stock: {w.stock.toLocaleString()} units</div>
+                  <div style={s.whStock}>Stock: {w.stock?.toLocaleString()} units</div>
                 </div>
               );
             })}
           </div>
 
           <div style={s.card}>
-            <h3 style={s.cardTitle}>⭐ VIP Orders ({data.vipOrders.length})</h3>
-            <table style={s.table}>
-              <thead>
-                <tr>{["ORDER","PRODUCT","QTY","TYPE","STATUS","WAREHOUSE"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
-              </thead>
-              <tbody>
-                {data.vipOrders.map((o, i) => (
-                  <tr key={i}>
-                    <td style={s.td}>#{o.id}</td>
-                    <td style={s.td}>{o.product}</td>
-                    <td style={s.td}>{o.qty}</td>
-                    <td style={s.td}><span style={s.badgeAdmin}>{o.type}</span></td>
-                    <td style={s.td}><span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>{o.status}</span></td>
-                    <td style={s.td}>{o.warehouse}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <h3 style={s.cardTitle}>⭐ VIP Orders ({vipOrders.length})</h3>
+            {vipOrders.length === 0 ? <p style={s.emptyText}>No VIP orders yet.</p> : (
+              <table style={s.table}>
+                <thead><tr>{["ORDER","PRODUCT","QTY","TYPE","STATUS","WAREHOUSE"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {vipOrders.map((o, i) => (
+                    <tr key={i}>
+                      <td style={s.td}>#{o.id}</td>
+                      <td style={s.td}>{o.product}</td>
+                      <td style={s.td}>{o.qty}</td>
+                      <td style={s.td}><span style={s.badgeAdmin}>{o.type}</span></td>
+                      <td style={s.td}><span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>{o.status}</span></td>
+                      <td style={s.td}>{o.warehouse}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
 
         {/* Pending Orders + Inventory */}
         <div style={s.row2}>
           <div style={s.card}>
-            <h3 style={s.cardTitle}>⏰ Pending Orders ({data.pendingOrders.length})</h3>
-            {data.pendingOrders.map((o, i) => (
+            <h3 style={s.cardTitle}>⏰ Pending Orders ({pendingOrders.length})</h3>
+            {pendingOrders.length === 0 ? <p style={s.emptyText}>No pending orders.</p> : pendingOrders.map((o, i) => (
               <div key={i} style={s.pendingCard}>
                 <div>
                   <div style={s.pendingTitle}>#{o.id} — {o.product}</div>
@@ -334,21 +297,19 @@ function Dashboard() {
                   <tr>{["PRODUCT ID","PRODUCT NAME","CATEGORY","CURRENT STOCK","UNIT","RESTOCK DATE","DISPATCH LIMIT/DAY"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {(data.inventory[activeWarehouse] || []).length === 0 ? (
+                  {(inventory[activeWarehouse] || []).length === 0 ? (
                     <tr><td colSpan="7" style={{ ...s.td, textAlign: "center", color: "#aaa" }}>No inventory data</td></tr>
-                  ) : (
-                    (data.inventory[activeWarehouse] || []).map((item, i) => (
-                      <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                        <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
-                        <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
-                        <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
-                        <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>{item.stock}</td>
-                        <td style={s.td}>{item.unit}</td>
-                        <td style={{ ...s.td, color: item.restock === "—" ? "#aaa" : "#E67E22" }}>{item.restock}</td>
-                        <td style={{ ...s.td, fontWeight: "700", color: "#C0392B" }}>{item.limit}</td>
-                      </tr>
-                    ))
-                  )}
+                  ) : (inventory[activeWarehouse] || []).map((item, i) => (
+                    <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                      <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
+                      <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
+                      <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
+                      <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>{item.stock}</td>
+                      <td style={s.td}>{item.unit}</td>
+                      <td style={{ ...s.td, color: item.restock === "—" ? "#aaa" : "#E67E22" }}>{item.restock}</td>
+                      <td style={{ ...s.td, fontWeight: "700", color: "#C0392B" }}>{item.limit}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -410,6 +371,7 @@ const s = {
   row2:          { display: "flex", gap: "20px", marginBottom: "24px" },
   card:          { flex: 1, backgroundColor: "#fff", borderRadius: "12px", padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
   cardTitle:     { margin: "0 0 16px", fontSize: "15px", fontWeight: "700", color: "#1a1a1a", display: "flex", alignItems: "center", gap: "8px" },
+  emptyText:     { color: "#aaa", fontSize: "13px", textAlign: "center", padding: "20px 0" },
   whRow:         { display: "flex", justifyContent: "space-between" },
   whName:        { fontWeight: "600", fontSize: "14px" },
   whDispatch:    { fontSize: "12px", color: "#888" },

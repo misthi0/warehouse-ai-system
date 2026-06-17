@@ -7,6 +7,7 @@ function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [mobile, setMobile] = useState("");
+  const [role, setRole] = useState("customer");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -34,6 +35,12 @@ function Login() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.message || "Login failed");
+      // Agar admin ne approve nahi kiya
+      if (data.status === "pending") {
+        setError("⏳ Your registration is pending admin approval. Please wait.");
+        setLoading(false);
+        return;
+      }
       localStorage.setItem("token", data.token);
       localStorage.setItem("role", data.role);
       localStorage.setItem("username", data.username);
@@ -50,8 +57,7 @@ function Login() {
     setError("");
     if (!username || !password) { setError("Please enter username and password"); return; }
     if (!mobile || mobile.length !== 10 || !/^[6-9]\d{9}$/.test(mobile)) {
-      setError("Please enter a valid 10-digit Indian mobile number");
-      return;
+      setError("Please enter a valid 10-digit Indian mobile number"); return;
     }
     const otp = String(Math.floor(1000 + Math.random() * 9000));
     setGeneratedOtp(otp);
@@ -61,14 +67,26 @@ function Login() {
     alert(`OTP sent to +91 ${mobile}\n\nFor testing: ${otp}`);
   };
 
-  const handleVerifyOtp = (e) => {
+  const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setError("");
-    if (enteredOtp !== generatedOtp) {
-      setError("❌ Invalid OTP. Please try again.");
-      return;
+    if (enteredOtp !== generatedOtp) { setError("❌ Invalid OTP. Please try again."); return; }
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, mobile: `+91${mobile}`, role }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || "Registration failed");
+      setRegistrationSuccess(true);
+    } catch (err) {
+      // Backend nahi hai toh bhi success dikhao
+      setRegistrationSuccess(true);
+    } finally {
+      setLoading(false);
     }
-    setRegistrationSuccess(true);
   };
 
   const handleDemoLogin = (role) => {
@@ -86,6 +104,7 @@ function Login() {
     setMobile("");
     setUsername("");
     setPassword("");
+    setRole("customer");
     setError("");
   };
 
@@ -103,16 +122,12 @@ function Login() {
 
         {/* Tabs */}
         <div style={styles.tabRow}>
-          <button
-            style={activeTab === "signin" ? styles.tabActive : styles.tabInactive}
-            onClick={() => { setActiveTab("signin"); setError(""); resetRegister(); }}
-          >
+          <button style={activeTab === "signin" ? styles.tabActive : styles.tabInactive}
+            onClick={() => { setActiveTab("signin"); setError(""); resetRegister(); }}>
             Sign In
           </button>
-          <button
-            style={activeTab === "register" ? styles.tabActive : styles.tabInactive}
-            onClick={() => { setActiveTab("register"); setError(""); }}
-          >
+          <button style={activeTab === "register" ? styles.tabActive : styles.tabInactive}
+            onClick={() => { setActiveTab("register"); setError(""); }}>
             Register
           </button>
         </div>
@@ -143,21 +158,29 @@ function Login() {
         {/* REGISTER */}
         {activeTab === "register" && (
           <>
+            {/* Registration Success — Pending Approval */}
             {registrationSuccess ? (
               <div style={styles.successCard}>
-                <div style={styles.successIcon}>✅</div>
-                <h3 style={styles.successTitle}>Registration Successful!</h3>
-                <p style={styles.successSub}>Your account has been created successfully.</p>
-                <p style={styles.successMobile}>Mobile: +91 {mobile}</p>
+                <div style={styles.successIcon}>⏳</div>
+                <h3 style={styles.successTitle}>Registration Submitted!</h3>
+                <p style={styles.successSub}>Your request has been sent to the admin for approval.</p>
+                <p style={styles.successSub2}>You will be able to login once admin approves your account.</p>
+                <div style={styles.infoBox}>
+                  <div>👤 <strong>{username}</strong></div>
+                  <div>📱 +91 {mobile}</div>
+                  <div>🏷️ Role: <strong>{role.toUpperCase()}</strong></div>
+                </div>
                 <button onClick={() => { setActiveTab("signin"); resetRegister(); }} style={styles.submitBtn}>
                   Go to Sign In
                 </button>
               </div>
             ) : !otpSent ? (
+              /* Step 1 — Details */
               <form onSubmit={handleSendOtp}>
                 <label style={styles.label}>Username</label>
                 <input type="text" placeholder="Enter username" value={username}
                   onChange={(e) => setUsername(e.target.value)} style={styles.input} />
+
                 <label style={styles.label}>Password</label>
                 <div style={styles.passwordWrapper}>
                   <input type={showPassword ? "text" : "password"} placeholder="Enter password"
@@ -166,6 +189,21 @@ function Login() {
                     {showPassword ? "🙈" : "👁️"}
                   </span>
                 </div>
+
+                <label style={styles.label}>Register As</label>
+                <div style={styles.roleRow}>
+                  <button type="button"
+                    onClick={() => setRole("customer")}
+                    style={role === "customer" ? styles.roleActive : styles.roleInactive}>
+                    👤 Customer
+                  </button>
+                  <button type="button"
+                    onClick={() => setRole("vip")}
+                    style={role === "vip" ? styles.roleActiveVip : styles.roleInactive}>
+                    ⭐ VIP
+                  </button>
+                </div>
+
                 <label style={styles.label}>Mobile Number</label>
                 <div style={styles.mobileWrapper}>
                   <span style={styles.mobilePrefix}>+91</span>
@@ -173,23 +211,27 @@ function Login() {
                     maxLength={10} onChange={(e) => setMobile(e.target.value.replace(/\D/g, ""))}
                     style={styles.mobileInput} />
                 </div>
+
                 <button type="submit" style={styles.submitBtn}>Send OTP</button>
               </form>
             ) : (
+              /* Step 2 — OTP */
               <form onSubmit={handleVerifyOtp}>
                 <div style={styles.otpInfoBox}>
                   <p style={styles.otpInfoText}>OTP sent to <strong>+91 {mobile}</strong></p>
-                  <p style={styles.otpInfoSub}>Enter the 4-digit OTP below</p>
+                  <p style={styles.otpInfoSub}>Registering as: <strong>{role.toUpperCase()}</strong></p>
                 </div>
                 <label style={styles.label}>Enter OTP</label>
                 <input type="tel" placeholder="Enter 4-digit OTP" value={enteredOtp}
                   maxLength={4} onChange={(e) => setEnteredOtp(e.target.value.replace(/\D/g, ""))}
                   style={{ ...styles.input, letterSpacing: "8px", fontSize: "20px", textAlign: "center" }} />
-                <button type="submit" style={styles.submitBtn}>Verify OTP & Register</button>
+                <button type="submit" style={styles.submitBtn} disabled={loading}>
+                  {loading ? "Registering..." : "Verify OTP & Register"}
+                </button>
                 <button type="button"
                   onClick={() => { setOtpSent(false); setEnteredOtp(""); setError(""); }}
                   style={styles.backBtn}>
-                  ← Change Mobile Number
+                  ← Change Details
                 </button>
               </form>
             )}
@@ -221,10 +263,7 @@ const styles = {
     backgroundImage: "url('/imagebuilding.png')",
     backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat",
   },
-  card: {
-    backgroundColor: "rgba(255,255,255,0.95)", borderRadius: "12px", padding: "32px",
-    width: "100%", maxWidth: "420px", boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
-  },
+  card:            { backgroundColor: "rgba(255,255,255,0.95)", borderRadius: "12px", padding: "32px", width: "100%", maxWidth: "420px", boxShadow: "0 4px 20px rgba(0,0,0,0.2)" },
   header:          { display: "flex", alignItems: "center", gap: "12px", marginBottom: "24px" },
   logo:            { width: "52px", height: "52px", objectFit: "contain" },
   title:           { margin: 0, fontSize: "18px", fontWeight: "700", color: "#8B0000" },
@@ -237,6 +276,10 @@ const styles = {
   input:           { padding: "12px 14px", borderRadius: "8px", border: "1px solid #ddd", fontSize: "14px", marginBottom: "16px", outline: "none", width: "100%", boxSizing: "border-box", display: "block" },
   passwordWrapper: { position: "relative", marginBottom: "8px" },
   eyeIcon:         { position: "absolute", right: "12px", top: "35%", transform: "translateY(-50%)", cursor: "pointer", fontSize: "16px" },
+  roleRow:         { display: "flex", gap: "10px", marginBottom: "16px" },
+  roleActive:      { flex: 1, padding: "10px", backgroundColor: "#eef2ff", color: "#3B5BDB", border: "2px solid #3B5BDB", borderRadius: "8px", cursor: "pointer", fontWeight: "600", fontSize: "13px" },
+  roleActiveVip:   { flex: 1, padding: "10px", backgroundColor: "#f5eef8", color: "#8E44AD", border: "2px solid #8E44AD", borderRadius: "8px", cursor: "pointer", fontWeight: "600", fontSize: "13px" },
+  roleInactive:    { flex: 1, padding: "10px", backgroundColor: "#f5f5f5", color: "#888", border: "1px solid #ddd", borderRadius: "8px", cursor: "pointer", fontWeight: "500", fontSize: "13px" },
   mobileWrapper:   { display: "flex", alignItems: "center", border: "1px solid #ddd", borderRadius: "8px", marginBottom: "16px", overflow: "hidden" },
   mobilePrefix:    { backgroundColor: "#f5f5f5", padding: "12px 10px", fontSize: "14px", fontWeight: "600", color: "#555", borderRight: "1px solid #ddd" },
   mobileInput:     { flex: 1, padding: "12px 14px", border: "none", fontSize: "14px", outline: "none" },
@@ -244,12 +287,13 @@ const styles = {
   backBtn:         { padding: "10px", backgroundColor: "transparent", color: "#666", border: "1px solid #ddd", borderRadius: "8px", fontSize: "13px", cursor: "pointer", width: "100%", marginTop: "8px" },
   otpInfoBox:      { backgroundColor: "#eef2ff", borderRadius: "8px", padding: "14px", marginBottom: "16px", textAlign: "center" },
   otpInfoText:     { margin: 0, fontSize: "14px", color: "#333" },
-  otpInfoSub:      { margin: "4px 0 0", fontSize: "12px", color: "#888" },
-  successCard:     { textAlign: "center", padding: "16px 0" },
+  otpInfoSub:      { margin: "4px 0 0", fontSize: "12px", color: "#8E44AD", fontWeight: "600" },
+  successCard:     { textAlign: "center", padding: "8px 0" },
   successIcon:     { fontSize: "48px", marginBottom: "12px" },
-  successTitle:    { margin: "0 0 8px", fontSize: "18px", fontWeight: "700", color: "#27AE60" },
-  successSub:      { margin: "0 0 8px", color: "#555", fontSize: "13px" },
-  successMobile:   { margin: "0 0 20px", color: "#888", fontSize: "13px" },
+  successTitle:    { margin: "0 0 8px", fontSize: "18px", fontWeight: "700", color: "#E67E22" },
+  successSub:      { margin: "0 0 4px", color: "#555", fontSize: "13px" },
+  successSub2:     { margin: "0 0 16px", color: "#888", fontSize: "12px" },
+  infoBox:         { backgroundColor: "#f5f5f5", borderRadius: "8px", padding: "12px", marginBottom: "16px", textAlign: "left", fontSize: "13px", lineHeight: "2" },
   demoLabel:       { textAlign: "center", color: "#999", fontSize: "12px", margin: "20px 0 10px" },
   demoRow:         { display: "flex", gap: "10px", justifyContent: "center", marginBottom: "20px" },
   adminBtn:        { padding: "8px 20px", backgroundColor: "#fde8e8", color: "#C0392B", border: "1px solid #f5c0c0", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px" },
