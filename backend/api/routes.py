@@ -47,6 +47,7 @@ class RegisterRequest(BaseModel):
     username: str
     password: str
     role: str = "customer"
+    mobile: str = ""
 
 
 # ==========================
@@ -59,6 +60,14 @@ def auth_login(request: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not bcrypt.checkpw(request.password.encode("utf-8"), user.hashed_password.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Check approval status
+    status = getattr(user, "status", "approved")
+    if status == "pending":
+        raise HTTPException(status_code=403, detail="Account pending admin approval")
+    if status == "rejected":
+        raise HTTPException(status_code=403, detail="Account has been rejected")
+
     token = jwt.encode(
         {
             "sub": user.username,
@@ -79,20 +88,129 @@ def auth_register(request: RegisterRequest, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.username == request.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already exists")
+
     hashed = bcrypt.hashpw(
         request.password.encode("utf-8"), bcrypt.gensalt()
     ).decode("utf-8")
-    new_user = User(
-        username=request.username,
-        hashed_password=hashed,
-        role=request.role
-    )
+
+    # Admin registers as approved, others need approval
+    try:
+        status = "approved" if request.role == "admin" else "pending"
+        new_user = User(
+            username=request.username,
+            hashed_password=hashed,
+            role=request.role,
+            mobile=request.mobile,
+            status=status
+        )
+    except Exception:
+        # If User model doesn't have mobile/status columns yet
+        new_user = User(
+            username=request.username,
+            hashed_password=hashed,
+            role=request.role
+        )
+
     db.add(new_user)
     db.commit()
+    db.refresh(new_user)
+
+    role = getattr(new_user, "role", request.role)
+    status_val = getattr(new_user, "status", "approved")
+
     return {
-        "message": "Registered!",
-        "user": {"username": new_user.username, "role": new_user.role}
+        "message": "Registration successful! Awaiting admin approval." if status_val == "pending" else "Registered!",
+        "user": {"username": new_user.username, "role": role}
     }
+
+
+# ==========================
+# Admin Registration Routes
+# ==========================
+@router.get("/admin/registrations")
+def get_pending_registrations(db: Session = Depends(get_db)):
+    try:
+        users = db.query(User).filter(
+            User.status == "pending",
+            User.role != "admin"
+        ).all()
+        return [
+            {
+                "id": u.id,
+                "username": u.username,
+                "mobile": getattr(u, "mobile", "—") or "—",
+                "role": u.role,
+                "status": u.status,
+                "date": str(getattr(u, "created_at", ""))[:10] or "—"
+            }
+            for u in users
+        ]
+    except Exception:
+        return []
+
+
+@router.post("/admin/registrations/{user_id}/approved")
+def approve_registration(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.status = "approved"
+    db.commit()
+    return {"message": f"✅ {user.username} approved!"}
+
+
+@router.post("/admin/registrations/{user_id}/rejected")
+def reject_registration(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.status = "rejected"
+    db.commit()
+    return {"message": f"❌ {user.username} rejected!"}
+
+
+# ==========================
+# Admin Order Routes
+# ==========================
+@router.get("/admin/orders")
+def get_admin_orders(db: Session = Depends(get_db)):
+    try:
+        orders = db.query(Order).all()
+        result = []
+        for o in orders:
+            product = db.query(Product).filter(Product.id == o.product_id).first()
+            result.append({
+                "id": o.id,
+                "username": o.customer_name,
+                "product": product.name if product else "Unknown",
+                "qty": o.quantity,
+                "type": "vip" if o.is_vip else "customer",
+                "date": str(o.created_at)[:10] if hasattr(o, "created_at") and o.created_at else "—",
+                "status": o.status
+            })
+        return result
+    except Exception:
+        return []
+
+
+@router.post("/admin/orders/{order_id}/approved")
+def approve_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order.status = "approved"
+    db.commit()
+    return {"message": f"✅ Order #{order_id} approved!"}
+
+
+@router.post("/admin/orders/{order_id}/rejected")
+def reject_order(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    order.status = "rejected"
+    db.commit()
+    return {"message": f"❌ Order #{order_id} rejected!"}
 
 
 # ==========================
@@ -105,11 +223,9 @@ def get_all_warehouses(db: Session = Depends(get_db)):
 
 @router.get("/warehouses/{warehouse_id}/inventory")
 def get_warehouse_inventory(warehouse_id: int, db: Session = Depends(get_db)):
-    inventory = (
-        db.query(Inventory)
-        .filter(Inventory.warehouse_id == warehouse_id)
-        .all()
-    )
+    inventory = db.query(Inventory).filter(
+        Inventory.warehouse_id == warehouse_id
+    ).all()
     if not inventory:
         raise HTTPException(status_code=404, detail="Warehouse not found")
 
@@ -123,7 +239,7 @@ def get_warehouse_inventory(warehouse_id: int, db: Session = Depends(get_db)):
             "product_name": product.name if product else None,
             "category": product.description if product else None,
             "available_quantity": inv.available_quantity,
-            "units_to_produce": inv.units_to_produce,
+            "units_to_produce": getattr(inv, "units_to_produce", 0),
             "dispatch_limit": inv.dispatch_limit,
             "dispatched_today": inv.dispatched_today,
             "restock_date": str(inv.restock_date) if inv.restock_date else None,
@@ -154,9 +270,9 @@ def get_all_products(db: Session = Depends(get_db)):
                     "warehouse_id": warehouse.id,
                     "warehouse_name": warehouse.name,
                     "location": warehouse.location,
-                    "pdf_product_id": inv.pdf_product_id,
+                    "pdf_product_id": getattr(inv, "pdf_product_id", None),
                     "available_quantity": inv.available_quantity,
-                    "units_to_produce": inv.units_to_produce,
+                    "units_to_produce": getattr(inv, "units_to_produce", 0),
                     "dispatch_limit": inv.dispatch_limit,
                     "dispatched_today": inv.dispatched_today,
                     "restock_date": str(inv.restock_date) if inv.restock_date else None

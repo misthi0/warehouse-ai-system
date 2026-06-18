@@ -42,6 +42,9 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(20), default="user")
+    status = Column(String(20), default="pending")  # ← ADD THIS
+    mobile = Column(String(15), nullable=True)       # ← ADD THIS
+    created_at = Column(DateTime, default=func.now())
 
 class Order(Base):
     __tablename__ = "orders"

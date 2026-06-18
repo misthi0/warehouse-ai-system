@@ -1,43 +1,64 @@
 import React, { useState, useEffect } from "react";
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 function Dashboard() {
-  const [activeWarehouse, setActiveWarehouse] = useState("Warehouse 1");
+  const [activeWarehouse, setActiveWarehouse] = useState("");
   const [stats, setStats] = useState({ totalOrders: 0, dispatchedToday: 0, pendingOrders: 0, vipOrders: 0, unavailable: 0 });
   const [warehouses, setWarehouses] = useState([]);
   const [vipOrders, setVipOrders] = useState([]);
   const [pendingOrders, setPendingOrders] = useState([]);
-  const [inventory, setInventory] = useState({ "Warehouse 1": [], "Warehouse 2": [], "Warehouse 3": [] });
+  const [inventory, setInventory] = useState({});
   const [regRequests, setRegRequests] = useState([]);
   const [orderRequests, setOrderRequests] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const username = localStorage.getItem("username") || "admin";
-
   const token = localStorage.getItem("token");
   const headers = { Authorization: `Bearer ${token}` };
 
   const handleLogout = () => { localStorage.clear(); window.location.href = "/"; };
 
   const fetchAll = async () => {
+    // Fetch inventory
     try {
-      const res = await fetch(`${API_BASE_URL}/api/dashboard`, { headers });
+      const res = await fetch(`${API_BASE_URL}/api/inventory/all`, { headers });
       if (res.ok) {
         const json = await res.json();
-        setStats(json.stats || {});
-        setWarehouses(json.warehouses || []);
-        setVipOrders(json.vipOrders || []);
-        setPendingOrders(json.pendingOrders || []);
-        setInventory(json.inventory || { "Warehouse 1": [], "Warehouse 2": [], "Warehouse 3": [] });
+        const inv = {};
+        const whs = [];
+        json.forEach((wh) => {
+          inv[wh.warehouse_name] = wh.products.map((p) => ({
+            inventory_id: p.inventory_id,
+            id: `P${String(p.inventory_id).padStart(3, "0")}`,
+            product: p.product_name,
+            category: p.category || "General",
+            stock: p.available_quantity,
+            unit: "pcs",
+            restock: p.restock_date || "—",
+            limit: p.dispatch_limit,
+          }));
+          whs.push({
+            name: wh.warehouse_name,
+            dispatched: wh.products.reduce((s, p) => s + (p.dispatched_today || 0), 0),
+            limit: wh.products.reduce((s, p) => s + (p.dispatch_limit || 0), 0),
+            stock: wh.products.reduce((s, p) => s + (p.available_quantity || 0), 0),
+          });
+        });
+        setWarehouses(whs);
+        setInventory(inv);
+        setStats(prev => ({ ...prev, dispatchedToday: whs.reduce((s, w) => s + w.dispatched, 0) }));
+        if (whs.length > 0) setActiveWarehouse(prev => prev || whs[0].name);
       }
-    } catch { console.log("Dashboard fetch failed"); }
+    } catch { console.log("Inventory fetch failed"); }
 
+    // Fetch registration requests
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/registrations`, { headers });
       if (res.ok) setRegRequests(await res.json());
     } catch { console.log("Reg requests fetch failed"); }
 
+    // Fetch order requests
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/orders`, { headers });
       if (res.ok) setOrderRequests(await res.json());
@@ -47,35 +68,37 @@ function Dashboard() {
   useEffect(() => { fetchAll(); }, []);
 
   const handlePdfUpload = async (file) => {
-    if (!file || file.type !== "application/pdf") { setUploadMsg("❌ Please upload a valid PDF file"); return; }
+    if (!file || (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls"))) { setUploadMsg("❌ Please upload a valid Excel file (.xlsx or .xls)"); return; }
     if (file.size > 10 * 1024 * 1024) { setUploadMsg("❌ File too large. Max 10MB"); return; }
     setUploading(true); setUploadMsg("");
     const formData = new FormData();
     formData.append("file", file);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/inventory/upload`, {
+      const res = await fetch(`${API_BASE_URL}/api/upload-excel`, {
         method: "POST", headers, body: formData,
       });
-      if (res.ok) { setUploadMsg("✅ PDF uploaded successfully!"); fetchAll(); }
-      else setUploadMsg("⚠️ Upload failed.");
+      if (res.ok) {
+        const result = await res.json();
+        setUploadMsg(`✅ PDF uploaded! ${result.inventory_added || 0} added, ${result.inventory_updated || 0} updated.`);
+        await fetchAll();
+      } else {
+        const err = await res.json();
+        setUploadMsg(`❌ Upload failed: ${err.detail || "Unknown error"}`);
+      }
     } catch { setUploadMsg("⚠️ Backend not connected."); }
     finally { setUploading(false); }
   };
 
   const handleRegAction = async (id, action) => {
     try {
-      await fetch(`${API_BASE_URL}/api/admin/registrations/${id}/${action}`, {
-        method: "POST", headers,
-      });
-      setRegRequests(prev => prev.map(r => r.id === id ? { ...r, status: action } : r));
+      await fetch(`${API_BASE_URL}/api/admin/registrations/${id}/${action}`, { method: "POST", headers });
+      fetchAll();
     } catch { console.log("Action failed"); }
   };
 
   const handleOrderAction = async (id, action) => {
     try {
-      await fetch(`${API_BASE_URL}/api/admin/orders/${id}/${action}`, {
-        method: "POST", headers,
-      });
+      await fetch(`${API_BASE_URL}/api/admin/orders/${id}/${action}`, { method: "POST", headers });
       setOrderRequests(prev => prev.map(o => o.id === id ? { ...o, status: action } : o));
     } catch { console.log("Action failed"); }
   };
@@ -88,9 +111,11 @@ function Dashboard() {
     { icon: "⚠️", color: "#E74C3C", bg: "#fdecea", label: "Unavailable",      value: stats.unavailable },
   ];
 
+  const warehouseNames = warehouses.map(w => w.name);
+  const currentWarehouse = activeWarehouse || warehouseNames[0] || "";
+
   return (
     <div style={s.page}>
-      {/* Navbar */}
       <div style={s.navbar}>
         <div style={s.navLeft}>
           <img src="/logo-abc.png" alt="logo" style={s.navLogo} />
@@ -114,7 +139,6 @@ function Dashboard() {
       </div>
 
       <div style={s.body}>
-        {/* Header */}
         <div style={s.headerRow}>
           <div>
             <h2 style={s.heading}>Admin Dashboard</h2>
@@ -129,7 +153,7 @@ function Dashboard() {
             <div key={i} style={s.statCard}>
               <div style={{ ...s.statIcon, backgroundColor: c.bg, color: c.color }}>{c.icon}</div>
               <div>
-                <div style={s.statValue}>{c.value ?? "—"}</div>
+                <div style={s.statValue}>{c.value ?? 0}</div>
                 <div style={s.statLabel}>{c.label}</div>
               </div>
             </div>
@@ -144,26 +168,18 @@ function Dashboard() {
               <span style={s.badgeRed}>{regRequests.filter(r => r.status === "pending").length} pending</span>
             )}
           </h3>
-          {regRequests.length === 0 ? (
-            <p style={s.emptyText}>No registration requests yet.</p>
-          ) : (
+          {regRequests.length === 0 ? <p style={s.emptyText}>No registration requests yet.</p> : (
             <table style={s.table}>
-              <thead>
-                <tr>{["ID","USERNAME","MOBILE","ROLE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
-              </thead>
+              <thead><tr>{["ID","USERNAME","MOBILE","ROLE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {regRequests.map((r, i) => (
                   <tr key={i}>
                     <td style={s.td}>#{r.id}</td>
                     <td style={{ ...s.td, fontWeight: "600" }}>{r.username}</td>
-                    <td style={s.td}>{r.mobile}</td>
+                    <td style={s.td}>{r.mobile || "—"}</td>
                     <td style={s.td}><span style={r.role === "vip" ? s.badgePurple : s.badgeBlue}>{r.role?.toUpperCase()}</span></td>
-                    <td style={s.td}>{r.date}</td>
-                    <td style={s.td}>
-                      <span style={r.status === "approved" ? s.badgeGreen : r.status === "rejected" ? s.badgeRejected : s.badgeYellow}>
-                        {r.status}
-                      </span>
-                    </td>
+                    <td style={s.td}>{r.date || r.created_at || "—"}</td>
+                    <td style={s.td}><span style={r.status === "approved" ? s.badgeGreen : r.status === "rejected" ? s.badgeRejected : s.badgeYellow}>{r.status}</span></td>
                     <td style={s.td}>
                       {r.status === "pending" ? (
                         <div style={{ display: "flex", gap: "6px" }}>
@@ -187,13 +203,9 @@ function Dashboard() {
               <span style={s.badgeRed}>{orderRequests.filter(o => o.status === "pending").length} pending</span>
             )}
           </h3>
-          {orderRequests.length === 0 ? (
-            <p style={s.emptyText}>No order requests yet.</p>
-          ) : (
+          {orderRequests.length === 0 ? <p style={s.emptyText}>No order requests yet.</p> : (
             <table style={s.table}>
-              <thead>
-                <tr>{["ORDER","USER","PRODUCT","QTY","TYPE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
-              </thead>
+              <thead><tr>{["ORDER","USER","PRODUCT","QTY","TYPE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {orderRequests.map((o, i) => (
                   <tr key={i}>
@@ -203,11 +215,7 @@ function Dashboard() {
                     <td style={s.td}>{o.qty}</td>
                     <td style={s.td}><span style={o.type === "vip" ? s.badgePurple : s.badgeBlue}>{o.type?.toUpperCase()}</span></td>
                     <td style={s.td}>{o.date}</td>
-                    <td style={s.td}>
-                      <span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : s.badgeYellow}>
-                        {o.status}
-                      </span>
-                    </td>
+                    <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : s.badgeYellow}>{o.status}</span></td>
                     <td style={s.td}>
                       {o.status === "pending" ? (
                         <div style={{ display: "flex", gap: "6px" }}>
@@ -227,7 +235,7 @@ function Dashboard() {
         <div style={s.row2}>
           <div style={s.card}>
             <h3 style={s.cardTitle}>⚡ Warehouse Utilization</h3>
-            {warehouses.length === 0 ? <p style={s.emptyText}>No data yet.</p> : warehouses.map((w, i) => {
+            {warehouses.length === 0 ? <p style={s.emptyText}>No data yet. Upload a PDF.</p> : warehouses.map((w, i) => {
               const pct = w.limit > 0 ? ((w.dispatched / w.limit) * 100).toFixed(1) : 0;
               return (
                 <div key={i} style={{ marginBottom: "16px" }}>
@@ -285,41 +293,45 @@ function Dashboard() {
 
           <div style={s.card}>
             <h3 style={s.cardTitle}>🏭 Warehouse Inventory</h3>
-            <div style={s.tabRow}>
-              {["Warehouse 1","Warehouse 2","Warehouse 3"].map(w => (
-                <button key={w} onClick={() => setActiveWarehouse(w)}
-                  style={activeWarehouse === w ? s.tabActive : s.tabInactive}>{w}</button>
-              ))}
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={s.table}>
-                <thead>
-                  <tr>{["PRODUCT ID","PRODUCT NAME","CATEGORY","CURRENT STOCK","UNIT","RESTOCK DATE","DISPATCH LIMIT/DAY"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {(inventory[activeWarehouse] || []).length === 0 ? (
-                    <tr><td colSpan="7" style={{ ...s.td, textAlign: "center", color: "#aaa" }}>No inventory data</td></tr>
-                  ) : (inventory[activeWarehouse] || []).map((item, i) => (
-                    <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                      <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
-                      <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
-                      <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
-                      <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>{item.stock}</td>
-                      <td style={s.td}>{item.unit}</td>
-                      <td style={{ ...s.td, color: item.restock === "—" ? "#aaa" : "#E67E22" }}>{item.restock}</td>
-                      <td style={{ ...s.td, fontWeight: "700", color: "#C0392B" }}>{item.limit}</td>
-                    </tr>
+            {warehouseNames.length === 0 ? <p style={s.emptyText}>Upload a PDF to see inventory.</p> : (
+              <>
+                <div style={s.tabRow}>
+                  {warehouseNames.map(w => (
+                    <button key={w} onClick={() => setActiveWarehouse(w)}
+                      style={currentWarehouse === w ? s.tabActive : s.tabInactive}>{w}</button>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={s.table}>
+                    <thead>
+                      <tr>{["PRODUCT ID","PRODUCT NAME","CATEGORY","CURRENT STOCK","UNIT","RESTOCK DATE","DISPATCH LIMIT/DAY"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {(inventory[currentWarehouse] || []).length === 0 ? (
+                        <tr><td colSpan="7" style={{ ...s.td, textAlign: "center", color: "#aaa" }}>No inventory data</td></tr>
+                      ) : (inventory[currentWarehouse] || []).map((item, i) => (
+                        <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                          <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
+                          <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
+                          <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
+                          <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>{item.stock}</td>
+                          <td style={s.td}>{item.unit}</td>
+                          <td style={{ ...s.td, color: item.restock === "—" ? "#aaa" : "#E67E22" }}>{item.restock}</td>
+                          <td style={{ ...s.td, fontWeight: "700", color: "#C0392B" }}>{item.limit}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
         {/* Upload */}
         <div style={s.uploadCard}>
           <h3 style={s.cardTitle}>⬆️ Upload Monthly Warehouse Report</h3>
-          <p style={s.uploadSub}>Upload a PDF with warehouse inventory data. The system extracts product quantities, dispatch limits and restock dates, then updates the database automatically.</p>
+          <p style={s.uploadSub}>Upload a Excel file with warehouse inventory data. The system extracts product quantities, dispatch limits and restock dates, then updates the database automatically.</p>
           {uploadMsg && (
             <div style={{ padding: "10px 14px", borderRadius: "8px", marginBottom: "12px", fontSize: "13px",
               backgroundColor: uploadMsg.startsWith("✅") ? "#e8f8ef" : "#fdecea",
@@ -328,13 +340,13 @@ function Dashboard() {
             </div>
           )}
           <label style={{ cursor: "pointer" }}>
-            <input type="file" accept="application/pdf" style={{ display: "none" }}
+            <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
               onChange={(e) => handlePdfUpload(e.target.files[0])} />
             <div style={{ ...s.dropzone, borderColor: uploading ? "#C0392B" : "#ddd" }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); handlePdfUpload(e.dataTransfer.files[0]); }}>
               <div style={s.dropIcon}>{uploading ? "⏳" : "📄"}</div>
-              <div style={s.dropText}>{uploading ? "Uploading..." : "Drop PDF here or click to browse"}</div>
+              <div style={s.dropText}>{uploading ? "Uploading..." : "Drop Excel file here or click to browse"}</div>
               <div style={s.dropMax}>Max 10 MB</div>
             </div>
           </label>
@@ -395,7 +407,7 @@ const s = {
   pendingSub:    { fontSize: "12px", color: "#888", marginTop: "2px" },
   pendingDays:   { color: "#E67E22", fontWeight: "600", fontSize: "13px" },
   pendingDate:   { color: "#aaa", fontSize: "12px" },
-  tabRow:        { display: "flex", gap: "8px", marginBottom: "12px" },
+  tabRow:        { display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" },
   tabActive:     { padding: "6px 14px", backgroundColor: "#C0392B", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600" },
   tabInactive:   { padding: "6px 14px", backgroundColor: "#f5f5f5", color: "#333", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer", fontSize: "13px" },
   uploadCard:    { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
