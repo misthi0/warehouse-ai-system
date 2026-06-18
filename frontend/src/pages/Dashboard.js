@@ -30,7 +30,8 @@ function Dashboard() {
         json.forEach((wh) => {
           inv[wh.warehouse_name] = wh.products.map((p) => ({
             inventory_id: p.inventory_id,
-            id: `P${String(p.inventory_id).padStart(3, "0")}`,
+            // ✅ CHANGED HERE: Now displays the original sheet product id mapping (e.g. 1001) instead of hardcoding "P..."
+            id: p.product_id, 
             product: p.product_name,
             category: p.category || "General",
             stock: p.available_quantity,
@@ -331,7 +332,7 @@ function Dashboard() {
         {/* Upload */}
         <div style={s.uploadCard}>
           <h3 style={s.cardTitle}>⬆️ Upload Monthly Warehouse Report</h3>
-          <p style={s.uploadSub}>Upload a Excel file with warehouse inventory data. The system extracts product quantities, dispatch limits and restock dates, then updates the database automatically.</p>
+          <p style={s.uploadSub}>Upload an Excel file with warehouse inventory data. The system extracts product quantities, dispatch limits and restock dates, then updates the database automatically.</p>
           {uploadMsg && (
             <div style={{ padding: "10px 14px", borderRadius: "8px", marginBottom: "12px", fontSize: "13px",
               backgroundColor: uploadMsg.startsWith("✅") ? "#e8f8ef" : "#fdecea",
