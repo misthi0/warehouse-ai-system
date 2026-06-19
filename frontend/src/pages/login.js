@@ -1,18 +1,18 @@
 import React, { useState } from "react";
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:5000";
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000"; // Updated default to 8000 to match FastAPI default
 
 function Login() {
   const [activeTab, setActiveTab] = useState("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [mobile, setMobile] = useState("");
+  const [email, setEmail] = useState(""); // 📩 Added email state tracking
   const [role, setRole] = useState("customer");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [otpSent, setOtpSent] = useState(false);
-  const [generatedOtp, setGeneratedOtp] = useState("");
   const [enteredOtp, setEnteredOtp] = useState("");
   const [registrationSuccess, setRegistrationSuccess] = useState(false);
 
@@ -34,17 +34,12 @@ function Login() {
         body: JSON.stringify({ username, password }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Login failed");
-      // Agar admin ne approve nahi kiya
-      if (data.status === "pending") {
-        setError("⏳ Your registration is pending admin approval. Please wait.");
-        setLoading(false);
-        return;
-      }
+      if (!response.ok) throw new Error(data.detail || "Login failed");
+      
       localStorage.setItem("token", data.token);
-      localStorage.setItem("role", data.role);
-      localStorage.setItem("username", data.username);
-      redirectByRole(data.role);
+      localStorage.setItem("role", data.user.role);
+      localStorage.setItem("username", data.user.username);
+      redirectByRole(data.user.role);
     } catch (err) {
       setError(err.message || "Login failed. Please try again.");
     } finally {
@@ -52,38 +47,70 @@ function Login() {
     }
   };
 
-  const handleSendOtp = (e) => {
+  // 📩 Step 1: Request Email OTP from Backend Server
+  const handleSendOtp = async (e) => {
     e.preventDefault();
     setError("");
-    if (!username || !password) { setError("Please enter username and password"); return; }
-    if (!mobile || mobile.length !== 10 || !/^[6-9]\d{9}$/.test(mobile)) {
-      setError("Please enter a valid 10-digit Indian mobile number"); return;
+    
+    if (!username || !password) { setError("Please fill in username and password fields."); return; }
+    if (!email || !email.includes("@")) { setError("Please enter a valid email address."); return; }
+    if (!mobile || mobile.length !== 10) { setError("Please enter a valid 10-digit mobile number."); return; }
+    
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/send-email-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Failed to trigger security code.");
+      
+      setOtpSent(true);
+      alert(`📩 Security verification code triggered for ${email}!\nCheck your mailbox or look at your backend command terminal logs.`);
+    } catch (err) {
+      setError(err.message || "Could not issue OTP token request.");
+    } finally {
+      setLoading(false);
     }
-    const otp = String(Math.floor(1000 + Math.random() * 9000));
-    setGeneratedOtp(otp);
-    setOtpSent(true);
-    setError("");
-    console.log("🔐 OTP for testing:", otp);
-    alert(`OTP sent to +91 ${mobile}\n\nFor testing: ${otp}`);
   };
 
+  // 🔑 Step 2: Verify the Code & Register Account permanently
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setError("");
-    if (enteredOtp !== generatedOtp) { setError("❌ Invalid OTP. Please try again."); return; }
+    
+    if (enteredOtp.length !== 6) { setError("❌ Please enter the full 6-digit security code."); return; }
+    
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+      // 1. Verify OTP with Backend Server
+      const verifyResponse = await fetch(`${API_BASE_URL}/api/auth/verify-email-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, mobile: `+91${mobile}`, role }),
+        body: JSON.stringify({ email: email.trim(), otp: enteredOtp }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "Registration failed");
+      const verifyData = await verifyResponse.json();
+      if (!verifyResponse.ok) throw new Error(verifyData.detail || "Invalid code verification failure.");
+
+      // 2. Code is valid! Complete registration sequence
+      const registerResponse = await fetch(`${API_BASE_URL}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          username, 
+          password, 
+          mobile: `+91${mobile}`, 
+          role,
+          email: email.trim()
+        }),
+      });
+      const registerData = await registerResponse.json();
+      if (!registerResponse.ok) throw new Error(registerData.detail || "Registration failed");
+      
       setRegistrationSuccess(true);
     } catch (err) {
-      // Backend nahi hai toh bhi success dikhao
-      setRegistrationSuccess(true);
+      setError(err.message || "Verification procedure failed.");
     } finally {
       setLoading(false);
     }
@@ -99,9 +126,9 @@ function Login() {
   const resetRegister = () => {
     setOtpSent(false);
     setRegistrationSuccess(false);
-    setGeneratedOtp("");
     setEnteredOtp("");
     setMobile("");
+    setEmail("");
     setUsername("");
     setPassword("");
     setRole("customer");
@@ -111,7 +138,7 @@ function Login() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        {/* Logo */}
+        {/* Logo Banner */}
         <div style={styles.header}>
           <img src="/logo-abc.png" alt="Aditya Birla Carbon" style={styles.logo} />
           <div>
@@ -120,7 +147,7 @@ function Login() {
           </div>
         </div>
 
-        {/* Tabs */}
+        {/* Tab Selection Row */}
         <div style={styles.tabRow}>
           <button style={activeTab === "signin" ? styles.tabActive : styles.tabInactive}
             onClick={() => { setActiveTab("signin"); setError(""); resetRegister(); }}>
@@ -132,10 +159,10 @@ function Login() {
           </button>
         </div>
 
-        {/* Error */}
+        {/* Dynamic Context Error Messages */}
         {error && <div style={styles.error}>{error}</div>}
 
-        {/* SIGN IN */}
+        {/* SIGN IN PANELS */}
         {activeTab === "signin" && (
           <form onSubmit={handleLogin}>
             <label style={styles.label}>Username</label>
@@ -155,10 +182,10 @@ function Login() {
           </form>
         )}
 
-        {/* REGISTER */}
+        {/* REGISTRATION SYSTEM PIPELINES */}
         {activeTab === "register" && (
           <>
-            {/* Registration Success — Pending Approval */}
+            {/* Stage A — Awaiting Approvals UI */}
             {registrationSuccess ? (
               <div style={styles.successCard}>
                 <div style={styles.successIcon}>⏳</div>
@@ -167,6 +194,7 @@ function Login() {
                 <p style={styles.successSub2}>You will be able to login once admin approves your account.</p>
                 <div style={styles.infoBox}>
                   <div>👤 <strong>{username}</strong></div>
+                  <div>📧 {email}</div>
                   <div>📱 +91 {mobile}</div>
                   <div>🏷️ Role: <strong>{role.toUpperCase()}</strong></div>
                 </div>
@@ -175,7 +203,7 @@ function Login() {
                 </button>
               </div>
             ) : !otpSent ? (
-              /* Step 1 — Details */
+              /* Stage B — Credentials & Email Submission Layout */
               <form onSubmit={handleSendOtp}>
                 <label style={styles.label}>Username</label>
                 <input type="text" placeholder="Enter username" value={username}
@@ -204,6 +232,10 @@ function Login() {
                   </button>
                 </div>
 
+                <label style={styles.label}>Email Address (For Secure OTP)</label>
+                <input type="email" placeholder="name@company.com" value={email}
+                  onChange={(e) => setEmail(e.target.value)} style={styles.input} />
+
                 <label style={styles.label}>Mobile Number</label>
                 <div style={styles.mobileWrapper}>
                   <span style={styles.mobilePrefix}>+91</span>
@@ -212,33 +244,37 @@ function Login() {
                     style={styles.mobileInput} />
                 </div>
 
-                <button type="submit" style={styles.submitBtn}>Send OTP</button>
+                <button type="submit" style={styles.submitBtn} disabled={loading}>
+                  {loading ? "Sending Code..." : "Send Email OTP"}
+                </button>
               </form>
             ) : (
-              /* Step 2 — OTP */
+              /* Stage C — 6-Digit OTP Token Input Display */
               <form onSubmit={handleVerifyOtp}>
                 <div style={styles.otpInfoBox}>
-                  <p style={styles.otpInfoText}>OTP sent to <strong>+91 {mobile}</strong></p>
-                  <p style={styles.otpInfoSub}>Registering as: <strong>{role.toUpperCase()}</strong></p>
+                  <p style={styles.otpInfoText}>Verification code sent to <strong>{email}</strong></p>
+                  <p style={styles.otpInfoSub}>Registering account status: <strong>{role.toUpperCase()}</strong></p>
                 </div>
-                <label style={styles.label}>Enter OTP</label>
-                <input type="tel" placeholder="Enter 4-digit OTP" value={enteredOtp}
-                  maxLength={4} onChange={(e) => setEnteredOtp(e.target.value.replace(/\D/g, ""))}
+                <label style={styles.label}>Enter 6-Digit Code</label>
+                <input type="tel" placeholder="000000" value={enteredOtp}
+                  maxLength={6} onChange={(e) => setEnteredOtp(e.target.value.replace(/\D/g, ""))}
                   style={{ ...styles.input, letterSpacing: "8px", fontSize: "20px", textAlign: "center" }} />
+                
                 <button type="submit" style={styles.submitBtn} disabled={loading}>
-                  {loading ? "Registering..." : "Verify OTP & Register"}
+                  {loading ? "Verifying Token..." : "Verify Code & Register"}
                 </button>
+                
                 <button type="button"
                   onClick={() => { setOtpSent(false); setEnteredOtp(""); setError(""); }}
                   style={styles.backBtn}>
-                  ← Change Details
+                  ← Back to Details
                 </button>
               </form>
             )}
           </>
         )}
 
-        {/* Demo Login */}
+        {/* Quick Demo Access Options */}
         {!registrationSuccess && (
           <>
             <p style={styles.demoLabel}>Quick demo login</p>

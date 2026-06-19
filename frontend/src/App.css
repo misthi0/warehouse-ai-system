@@ -10,16 +10,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #6e0f1f, #2b0a10);
+  background: var(--login-gradient);
+  transition: background 0.3s ease;
 }
 
 .login-card {
-  background: #ffffff;
+  background: var(--bg-card);
   padding: 40px 35px;
   border-radius: 12px;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  box-shadow: 0 8px 30px var(--shadow-login);
   text-align: center;
   width: 350px;
+  transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
 .login-logo {
@@ -28,12 +30,12 @@
 }
 
 .login-card h2 {
-  color: #6e0f1f;
+  color: #6e0f1f; /* Kept signature corporate branding intact */
   margin-bottom: 5px;
 }
 
 .subtitle {
-  color: #777;
+  color: var(--text-muted);
   font-size: 13px;
   margin-bottom: 25px;
 }
@@ -42,9 +44,11 @@
   width: 100%;
   padding: 12px;
   margin-bottom: 15px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border-ui);
   border-radius: 6px;
   font-size: 14px;
+  background-color: var(--bg-card);
+  color: var(--text-main);
 }
 
 .login-card button {
@@ -63,10 +67,12 @@
 .login-card button:hover {
   background: #8a1428;
 }
+
 .layout {
   display: flex;
   min-height: 100vh;
-  background: #f4f6f9;
+  background: var(--bg-app);
+  transition: background 0.3s ease;
 }
 
 .sidebar {
@@ -99,6 +105,7 @@
 .main-content {
   flex: 1;
   padding: 30px;
+  background: var(--bg-app);
 }
 
 .cards-row {
@@ -109,14 +116,15 @@
 
 .card {
   flex: 1;
-  background: white;
+  background: var(--bg-card);
   border-radius: 10px;
   padding: 20px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px var(--shadow-ui);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
 .card h4 {
-  color: #777;
+  color: var(--text-muted);
   font-size: 14px;
   margin-bottom: 10px;
 }
@@ -129,35 +137,39 @@
 
 table {
   width: 100%;
-  background: white;
+  background: var(--bg-card);
   border-radius: 10px;
   border-collapse: collapse;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px var(--shadow-ui);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 
 th, td {
   padding: 12px 15px;
   text-align: left;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--border-table);
+  color: var(--text-main);
 }
 
 th {
-  background: #f9f9f9;
-  color: #555;
+  background: var(--bg-table-th);
+  color: var(--text-muted);
 }
+
 .order-form {
-  background: white;
+  background: var(--bg-card);
   padding: 25px;
   border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px var(--shadow-ui);
   max-width: 400px;
+  transition: background 0.3s ease;
 }
 
 .order-form label {
   display: block;
   margin-bottom: 5px;
   font-weight: bold;
-  color: #555;
+  color: var(--text-label);
 }
 
 .order-form select,
@@ -165,8 +177,10 @@ th {
   width: 100%;
   padding: 10px;
   margin-bottom: 15px;
-  border: 1px solid #ccc;
+  border: 1px solid var(--border-ui);
   border-radius: 6px;
+  background-color: var(--bg-card);
+  color: var(--text-main);
 }
 
 .order-form button {
@@ -181,12 +195,15 @@ th {
 
 .order-result {
   margin-top: 25px;
-  background: white;
+  background: var(--bg-card);
   padding: 20px;
   border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  box-shadow: 0 2px 8px var(--shadow-ui);
   max-width: 400px;
+  color: var(--text-main);
+  transition: background 0.3s ease;
 }
+
 .vip-badge {
   background: gold;
   color: #6e0f1f;
@@ -196,4 +213,23 @@ th {
   border-radius: 12px;
   margin-left: 10px;
   vertical-align: middle;
+}
+
+/* 🕹️ STYLISH SWITCH CONTROLS */
+.theme-switch-tab {
+  padding: 12px 10px;
+  margin-top: auto; /* Pushes it beautifully to the bottom of the sidebar */
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 500;
+  border: 1px dashed rgba(255, 255, 255, 0.3);
+  background: rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
+}
+
+.theme-switch-tab:hover {
+  background: #8a1428;
 }

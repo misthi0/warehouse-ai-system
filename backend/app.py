@@ -2,8 +2,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
-from models.database import engine
+from models.database import engine, SessionLocal  # 🔑 Imported SessionLocal to clear tables safely
 from models import models
+# Inside backend/app.py
+# Inside backend/app.py
+from models.database import engine
+from models.models import Base
+
+# This forces SQLAlchemy to verify and create tables every single time the server boots up!
+Base.metadata.create_all(bind=engine)
+
 
 # Dispatch Engine
 try:
@@ -21,7 +29,7 @@ except ImportError as e:
     print(f"⚠️ PDF upload not found: {e}")
     pdf_available = False
 
-# Create DB Tables
+# Ensure database tables exist safely
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -29,6 +37,30 @@ app = FastAPI(
     description="Smart Multi-Warehouse Dispatch and Inventory Management System",
     version="1.0.0"
 )
+
+# 🧹 TARGETED STARTUP RESET
+# This wipes out ONLY the inventory data whenever the server starts, keeping users safe!
+@app.on_event("startup")
+def clean_inventory_on_startup():
+    print("\n🧹 [STARTUP] Wiping old inventory tables for a clean slate...")
+    db = SessionLocal()
+    try:
+        # Delete data from stock/warehouse tables only
+        db.query(models.Inventory).delete()
+        db.query(models.Product).delete()
+        db.query(models.Warehouse).delete()
+        
+        # If your project uses the Order table and you want it cleared on restart, uncomment the line below:
+        # db.query(models.Order).delete()
+        
+        db.commit()
+        print("✅ Stock data cleared! Registered users have been safely preserved.\n")
+    except Exception as e:
+        db.rollback()
+        print(f"⚠️ Notice during startup clear sequence: {e}\n")
+    finally:
+        db.close()
+
 
 # CORS
 app.add_middleware(

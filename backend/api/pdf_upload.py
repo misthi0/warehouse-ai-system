@@ -150,6 +150,17 @@ async def upload_excel(
 
     ensure_is_latest_column(db)
 
+    # 🔄 AUTOMATIC CLEAR ON NEW UPLOAD:
+    print("🧹 New Excel detected. Clearing old inventory metrics while preserving users...")
+    try:
+        db.query(Inventory).delete()
+        db.query(Product).delete()
+        db.query(Warehouse).delete()
+        db.commit()
+    except Exception as clear_err:
+        print(f"⚠️ Notice during clear loop: {clear_err}")
+        db.rollback()
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
         content = await file.read()
         tmp.write(content)
@@ -242,8 +253,6 @@ async def upload_excel(
 
                     if warehouse_id not in latest_warehouse_ids:
                         latest_warehouse_ids.append(warehouse_id)
-                        db.query(Inventory).filter(Inventory.warehouse_id == warehouse_id).delete()
-                        db.commit()
 
                     existing_product = db.query(Product).filter(Product.name == product_name).first()
                     if not existing_product:
@@ -258,11 +267,10 @@ async def upload_excel(
                         db.commit()
                         actual_product_id = existing_product.id
 
-                    # Explicitly write the sheet identifier directly to your row layout properties
                     inv = Inventory(
                         warehouse_id=warehouse_id,
                         product_id=actual_product_id,
-                        pdf_product_id=product_id_raw,  # Saves 1001 here
+                        pdf_product_id=product_id_raw,  
                         available_quantity=current_stock,
                         dispatch_limit=dispatch_limit,
                         dispatched_today=0,
@@ -284,6 +292,15 @@ async def upload_excel(
         for wid in latest_warehouse_ids:
             db.execute(text(f"UPDATE warehouses SET is_latest = 1 WHERE id = {wid}"))
         db.commit()
+
+        # 🔄 VIP BACKLOG CLEARANCE PLUGGED HERE
+        try:
+            from api.routes import clear_vip_backlog_after_upload
+            print("🔄 Processing rolling VIP backlog subtraction limits...")
+            clear_vip_backlog_after_upload(db)
+            print("✅ Backlog rolling queue cleared safely!")
+        except Exception as e:
+            print(f"⚠️ Backlog clearance execution failed: {e}")
 
         return {"message": "Success"}
 
@@ -309,7 +326,6 @@ def get_all_inventory(db: Session = Depends(get_db)):
             if product:
                 products.append({
                     "inventory_id": inv.id,
-                    # FIX: This line guarantees the user sees '1001' over internal system generated values
                     "product_id": inv.pdf_product_id if inv.pdf_product_id else str(product.id),
                     "db_product_id": product.id,
                     "product_name": product.name,
@@ -335,7 +351,6 @@ def get_all_inventory(db: Session = Depends(get_db)):
 
 @router.delete("/clear/all")
 def clear_all_data(db: Session = Depends(get_db)):
-    """Call this route to clear everything completely without deleting files manually"""
     db.query(Inventory).delete()
     db.query(Product).delete()
     db.query(Warehouse).delete()

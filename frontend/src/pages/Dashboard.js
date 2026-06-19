@@ -1,6 +1,27 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 
+// Double-check your terminal to ensure FastAPI is running on port 8000!
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+
+// 🕹️ IMMEDATELY ACCESSIBLE MULTI-THEME TOGGLE SYSTEM 
+function ThemeSwitcher() {
+  const [theme, setTheme] = useState(localStorage.getItem('app-theme') || 'light');
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('app-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
+  return (
+    <button onClick={toggleTheme} style={s.themeBtn}>
+      {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
+    </button>
+  );
+}
 
 function Dashboard() {
   const [activeWarehouse, setActiveWarehouse] = useState("");
@@ -14,13 +35,9 @@ function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const username = localStorage.getItem("username") || "admin";
-  const token = localStorage.getItem("token");
-  const headers = { Authorization: `Bearer ${token}` };
 
-  const handleLogout = () => { localStorage.clear(); window.location.href = "/"; };
-
-  const fetchAll = async () => {
-    // Fetch inventory
+  const fetchAll = useCallback(async () => {
+    const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
     try {
       const res = await fetch(`${API_BASE_URL}/api/inventory/all`, { headers });
       if (res.ok) {
@@ -30,8 +47,7 @@ function Dashboard() {
         json.forEach((wh) => {
           inv[wh.warehouse_name] = wh.products.map((p) => ({
             inventory_id: p.inventory_id,
-            // ✅ CHANGED HERE: Now displays the original sheet product id mapping (e.g. 1001) instead of hardcoding "P..."
-            id: p.product_id, 
+            id: p.product_id || p.pdf_product_id || `P${p.inventory_id}`,
             product: p.product_name,
             category: p.category || "General",
             stock: p.available_quantity,
@@ -53,63 +69,114 @@ function Dashboard() {
       }
     } catch { console.log("Inventory fetch failed"); }
 
-    // Fetch registration requests
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/registrations`, { headers });
       if (res.ok) setRegRequests(await res.json());
     } catch { console.log("Reg requests fetch failed"); }
 
-    // Fetch order requests
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/orders`, { headers });
-      if (res.ok) setOrderRequests(await res.json());
+      if (res.ok) {
+        const allOrders = await res.json();
+        setOrderRequests(allOrders);
+        const vipList = allOrders.filter(o => o.type === "vip");
+        const pendingList = allOrders.filter(o => o.status === "pending");
+        setVipOrders(vipList);
+        setPendingOrders(pendingList);
+        setStats(prev => ({
+          ...prev,
+          totalOrders: allOrders.length,
+          pendingOrders: pendingList.length,
+          vipOrders: vipList.length,
+          unavailable: allOrders.filter(o => o.status === "rejected").length
+        }));
+      }
     } catch { console.log("Order requests fetch failed"); }
+  }, []);
+
+  useEffect(() => { 
+    fetchAll(); 
+  }, [fetchAll]);
+
+  const handleLogout = () => { 
+    localStorage.clear(); 
+    window.location.href = "/"; 
   };
 
-  useEffect(() => { fetchAll(); }, []);
-
   const handlePdfUpload = async (file) => {
-    if (!file || (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls"))) { setUploadMsg("❌ Please upload a valid Excel file (.xlsx or .xls)"); return; }
+    if (!file || (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls") && !file.name.endsWith(".pdf"))) { 
+      setUploadMsg("❌ Please upload a valid Excel or PDF file"); 
+      return; 
+    }
     if (file.size > 10 * 1024 * 1024) { setUploadMsg("❌ File too large. Max 10MB"); return; }
-    setUploading(true); setUploadMsg("");
+    
+    setUploading(true); 
+    setUploadMsg("⏳ Uploading file to server...");
+    
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", file); 
+    
+    const targetUrl = `${API_BASE_URL}/api/inventory/upload`;
+    
     try {
-      const res = await fetch(`${API_BASE_URL}/api/upload-excel`, {
-        method: "POST", headers, body: formData,
+      const res = await fetch(targetUrl, {
+        method: "POST", 
+        body: formData, 
       });
+      
       if (res.ok) {
         const result = await res.json();
-        setUploadMsg(`✅ PDF uploaded! ${result.inventory_added || 0} added, ${result.inventory_updated || 0} updated.`);
+        setUploadMsg(`✅ Success! ${result.inventory_added || 0} records added, ${result.inventory_updated || 0} updated.`);
         await fetchAll();
       } else {
         const err = await res.json();
-        setUploadMsg(`❌ Upload failed: ${err.detail || "Unknown error"}`);
+        const errorString = typeof err.detail === 'object' ? JSON.stringify(err.detail) : err.detail;
+        setUploadMsg(`❌ Server Error (${res.status}): ${errorString || "Unknown error"}`);
       }
-    } catch { setUploadMsg("⚠️ Backend not connected."); }
-    finally { setUploading(false); }
+    } catch (e) { 
+      setUploadMsg(`⚠️ Network Failure: Connection blocked. Ensure your FastAPI server is running on port 8000.`); 
+    } finally { 
+      setUploading(false); 
+    }
   };
 
   const handleRegAction = async (id, action) => {
+    const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
     try {
       await fetch(`${API_BASE_URL}/api/admin/registrations/${id}/${action}`, { method: "POST", headers });
-      fetchAll();
+      await fetchAll();
     } catch { console.log("Action failed"); }
   };
 
+  // 🌟 MODIFIED: Redirects approval confirmations straight to the main manual dispatch engine route
   const handleOrderAction = async (id, action) => {
+    const headers = { Authorization: `Bearer ${localStorage.getItem("token")}` };
+    
+    // Choose route based on context selection
+    const targetUrl = action === "approved" 
+      ? `${API_BASE_URL}/api/dispatch/${id}`           // Manual Engine Dispatch Route
+      : `${API_BASE_URL}/api/admin/orders/${id}/rejected`; // Fallback Order Denial Route
+
     try {
-      await fetch(`${API_BASE_URL}/api/admin/orders/${id}/${action}`, { method: "POST", headers });
-      setOrderRequests(prev => prev.map(o => o.id === id ? { ...o, status: action } : o));
-    } catch { console.log("Action failed"); }
+      const res = await fetch(targetUrl, { method: "POST", headers });
+      if (res.ok) {
+        setOrderRequests(prev => prev.map(o => o.id === id ? { ...o, status: action } : o));
+        await fetchAll();
+      } else {
+        const errorData = await res.json();
+        alert(`Fulfillment Error: ${errorData.detail || "Unable to assign appropriate stock capacity"}`);
+      }
+    } catch { 
+      console.log("Order Action request failed"); 
+    }
   };
 
   const statCards = [
-    { icon: "📦", color: "#C0392B", bg: "#fde8e8", label: "Total Orders",     value: stats.totalOrders },
-    { icon: "✅", color: "#27AE60", bg: "#e8f8ef", label: "Dispatched Today", value: stats.dispatchedToday },
-    { icon: "⏰", color: "#F39C12", bg: "#fef9e7", label: "Pending Orders",   value: stats.pendingOrders },
-    { icon: "⭐", color: "#8E44AD", bg: "#f5eef8", label: "VIP Orders",       value: stats.vipOrders },
-    { icon: "⚠️", color: "#E74C3C", bg: "#fdecea", label: "Unavailable",      value: stats.unavailable },
+    { icon: "📦", color: "#C0392B", bg: "var(--bg-stat-box)", label: "Total Orders",     value: stats.totalOrders },
+    { icon: "✅", color: "#27AE60", bg: "var(--bg-stat-box)", label: "Dispatched Today", value: stats.dispatchedToday },
+    { icon: "⏰", color: "#F39C12", bg: "var(--bg-stat-box)", label: "Pending Orders",   value: stats.pendingOrders },
+    { icon: "⭐", color: "#8E44AD", bg: "var(--bg-stat-box)", label: "VIP Orders",       value: stats.vipOrders },
+    { icon: "⚠️", color: "#E74C3C", bg: "var(--bg-stat-box)", label: "Unavailable",      value: stats.unavailable },
   ];
 
   const warehouseNames = warehouses.map(w => w.name);
@@ -129,6 +196,7 @@ function Dashboard() {
           <a href="/order-portal" style={s.navLink}>📦 Order Portal</a>
           <a href="/vip-portal"   style={s.navLink}>⭐ VIP Portal</a>
           <span style={s.navActive}>📊 Dashboard</span>
+          <ThemeSwitcher /> 
         </div>
         <div style={s.navRight}>
           <div>
@@ -163,12 +231,7 @@ function Dashboard() {
 
         {/* Registration Requests */}
         <div style={{ ...s.card, marginBottom: "24px" }}>
-          <h3 style={s.cardTitle}>
-            👤 Registration Requests
-            {regRequests.filter(r => r.status === "pending").length > 0 && (
-              <span style={s.badgeRed}>{regRequests.filter(r => r.status === "pending").length} pending</span>
-            )}
-          </h3>
+          <h3 style={s.cardTitle}>👤 Registration Requests</h3>
           {regRequests.length === 0 ? <p style={s.emptyText}>No registration requests yet.</p> : (
             <table style={s.table}>
               <thead><tr>{["ID","USERNAME","MOBILE","ROLE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
@@ -176,7 +239,7 @@ function Dashboard() {
                 {regRequests.map((r, i) => (
                   <tr key={i}>
                     <td style={s.td}>#{r.id}</td>
-                    <td style={{ ...s.td, fontWeight: "600" }}>{r.username}</td>
+                    <td style={{ ...s.td, fontWeight: "600", color: "var(--text-main)" }}>{r.username}</td>
                     <td style={s.td}>{r.mobile || "—"}</td>
                     <td style={s.td}><span style={r.role === "vip" ? s.badgePurple : s.badgeBlue}>{r.role?.toUpperCase()}</span></td>
                     <td style={s.td}>{r.date || r.created_at || "—"}</td>
@@ -198,12 +261,7 @@ function Dashboard() {
 
         {/* Order Approval Requests */}
         <div style={{ ...s.card, marginBottom: "24px" }}>
-          <h3 style={s.cardTitle}>
-            🛒 Order Approval Requests
-            {orderRequests.filter(o => o.status === "pending").length > 0 && (
-              <span style={s.badgeRed}>{orderRequests.filter(o => o.status === "pending").length} pending</span>
-            )}
-          </h3>
+          <h3 style={s.cardTitle}>🛒 Order Approval Requests</h3>
           {orderRequests.length === 0 ? <p style={s.emptyText}>No order requests yet.</p> : (
             <table style={s.table}>
               <thead><tr>{["ORDER","USER","PRODUCT","QTY","TYPE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
@@ -211,12 +269,12 @@ function Dashboard() {
                 {orderRequests.map((o, i) => (
                   <tr key={i}>
                     <td style={s.td}>#{o.id}</td>
-                    <td style={{ ...s.td, fontWeight: "600" }}>{o.username}</td>
+                    <td style={{ ...s.td, fontWeight: "600", color: "var(--text-main)" }}>{o.username}</td>
                     <td style={s.td}>{o.product}</td>
                     <td style={s.td}>{o.qty}</td>
                     <td style={s.td}><span style={o.type === "vip" ? s.badgePurple : s.badgeBlue}>{o.type?.toUpperCase()}</span></td>
                     <td style={s.td}>{o.date}</td>
-                    <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : s.badgeYellow}>{o.status}</span></td>
+                    <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : o.badgeYellow}>{o.status}</span></td>
                     <td style={s.td}>
                       {o.status === "pending" ? (
                         <div style={{ display: "flex", gap: "6px" }}>
@@ -236,7 +294,7 @@ function Dashboard() {
         <div style={s.row2}>
           <div style={s.card}>
             <h3 style={s.cardTitle}>⚡ Warehouse Utilization</h3>
-            {warehouses.length === 0 ? <p style={s.emptyText}>No data yet. Upload a PDF.</p> : warehouses.map((w, i) => {
+            {warehouses.length === 0 ? <p style={s.emptyText}>No data yet. Upload an Excel/PDF report.</p> : warehouses.map((w, i) => {
               const pct = w.limit > 0 ? ((w.dispatched / w.limit) * 100).toFixed(1) : 0;
               return (
                 <div key={i} style={{ marginBottom: "16px" }}>
@@ -254,7 +312,7 @@ function Dashboard() {
 
           <div style={s.card}>
             <h3 style={s.cardTitle}>⭐ VIP Orders ({vipOrders.length})</h3>
-            {vipOrders.length === 0 ? <p style={s.emptyText}>No VIP orders yet.</p> : (
+            {vipOrders.length === 0 ? <p style={s.emptyText}>No VIP orders found.</p> : (
               <table style={s.table}>
                 <thead><tr>{["ORDER","PRODUCT","QTY","TYPE","STATUS","WAREHOUSE"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
                 <tbody>
@@ -263,9 +321,9 @@ function Dashboard() {
                       <td style={s.td}>#{o.id}</td>
                       <td style={s.td}>{o.product}</td>
                       <td style={s.td}>{o.qty}</td>
-                      <td style={s.td}><span style={s.badgeAdmin}>{o.type}</span></td>
-                      <td style={s.td}><span style={o.status === "dispatched" ? s.badgeGreen : s.badgeYellow}>{o.status}</span></td>
-                      <td style={s.td}>{o.warehouse}</td>
+                      <td style={s.td}><span style={s.badgeAdmin}>{o.type?.toUpperCase()}</span></td>
+                      <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : o.badgeYellow}>{o.status}</span></td>
+                      <td style={s.td}>{o.warehouse || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -282,11 +340,11 @@ function Dashboard() {
               <div key={i} style={s.pendingCard}>
                 <div>
                   <div style={s.pendingTitle}>#{o.id} — {o.product}</div>
-                  <div style={s.pendingSub}>Qty: {o.qty} · {o.type}</div>
+                  <div style={s.pendingSub}>Qty: {o.qty} · {o.type?.toUpperCase()}</div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={s.pendingDays}>{o.days} days</div>
-                  <div style={s.pendingDate}>{o.date}</div>
+                  <div style={s.pendingDays}>{o.days || 0} days</div>
+                  <div style={s.pendingDate}>{o.date || "—"}</div>
                 </div>
               </div>
             ))}
@@ -294,7 +352,7 @@ function Dashboard() {
 
           <div style={s.card}>
             <h3 style={s.cardTitle}>🏭 Warehouse Inventory</h3>
-            {warehouseNames.length === 0 ? <p style={s.emptyText}>Upload a PDF to see inventory.</p> : (
+            {warehouseNames.length === 0 ? <p style={s.emptyText}>Upload a report to view live inventory records.</p> : (
               <>
                 <div style={s.tabRow}>
                   {warehouseNames.map(w => (
@@ -308,12 +366,10 @@ function Dashboard() {
                       <tr>{["PRODUCT ID","PRODUCT NAME","CATEGORY","CURRENT STOCK","UNIT","RESTOCK DATE","DISPATCH LIMIT/DAY"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr>
                     </thead>
                     <tbody>
-                      {(inventory[currentWarehouse] || []).length === 0 ? (
-                        <tr><td colSpan="7" style={{ ...s.td, textAlign: "center", color: "#aaa" }}>No inventory data</td></tr>
-                      ) : (inventory[currentWarehouse] || []).map((item, i) => (
-                        <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                      {(inventory[currentWarehouse] || []).map((item, i) => (
+                        <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "var(--bg-card)" : "var(--bg-table-stripe)" }}>
                           <td style={{ ...s.td, color: "#888", fontFamily: "monospace" }}>{item.id}</td>
-                          <td style={{ ...s.td, fontWeight: "600" }}>{item.product}</td>
+                          <td style={{ ...s.td, fontWeight: "600", color: "var(--text-main)" }}>{item.product}</td>
                           <td style={s.td}><span style={s.categoryBadge}>{item.category}</span></td>
                           <td style={{ ...s.td, fontWeight: "700", color: item.stock < 100 ? "#E74C3C" : "#27AE60" }}>{item.stock}</td>
                           <td style={s.td}>{item.unit}</td>
@@ -329,26 +385,26 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Upload */}
+        {/* Upload Card */}
         <div style={s.uploadCard}>
           <h3 style={s.cardTitle}>⬆️ Upload Monthly Warehouse Report</h3>
-          <p style={s.uploadSub}>Upload an Excel file with warehouse inventory data. The system extracts product quantities, dispatch limits and restock dates, then updates the database automatically.</p>
+          <p style={s.uploadSub}>Drop your source Excel (.xlsx) or operational summary PDF here to instantly refresh warehouse sync values.</p>
           {uploadMsg && (
-            <div style={{ padding: "10px 14px", borderRadius: "8px", marginBottom: "12px", fontSize: "13px",
-              backgroundColor: uploadMsg.startsWith("✅") ? "#e8f8ef" : "#fdecea",
-              color: uploadMsg.startsWith("✅") ? "#27AE60" : "#C0392B" }}>
+            <div style={{ padding: "12px 16px", borderRadius: "8px", marginBottom: "14px", fontSize: "13px", lineHeight: "1.4",
+              backgroundColor: uploadMsg.startsWith("✅") ? "#e8f8ef" : uploadMsg.startsWith("⏳") ? "#eef2ff" : "#fdecea",
+              color: uploadMsg.startsWith("✅") ? "#27AE60" : uploadMsg.startsWith("⏳") ? "#3B5BDB" : "#C0392B" }}>
               {uploadMsg}
             </div>
           )}
           <label style={{ cursor: "pointer" }}>
-            <input type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+            <input type="file" accept=".xlsx,.xls,.pdf" style={{ display: "none" }}
               onChange={(e) => handlePdfUpload(e.target.files[0])} />
-            <div style={{ ...s.dropzone, borderColor: uploading ? "#C0392B" : "#ddd" }}
+            <div style={{ ...s.dropzone, borderColor: uploading ? "#C0392B" : "var(--border-ui)" }}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => { e.preventDefault(); handlePdfUpload(e.dataTransfer.files[0]); }}>
               <div style={s.dropIcon}>{uploading ? "⏳" : "📄"}</div>
-              <div style={s.dropText}>{uploading ? "Uploading..." : "Drop Excel file here or click to browse"}</div>
-              <div style={s.dropMax}>Max 10 MB</div>
+              <div style={s.dropText}>{uploading ? "Processing layout vectors..." : "Drop file here or click to browse"}</div>
+              <div style={s.dropMax}>Supports .xlsx, .xls, and .pdf up to 10MB</div>
             </div>
           </label>
         </div>
@@ -358,7 +414,7 @@ function Dashboard() {
 }
 
 const s = {
-  page:          { fontFamily: "Inter, sans-serif", backgroundColor: "#f4f6f9", minHeight: "100vh" },
+  page:          { fontFamily: "Inter, sans-serif", backgroundColor: "var(--bg-app)", minHeight: "100vh", transition: "all 0.3s ease" },
   navbar:        { backgroundColor: "#8B0000", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px" },
   navLeft:       { display: "flex", alignItems: "center", gap: "12px" },
   navLogo:       { width: "48px", height: "48px", objectFit: "contain", borderRadius: "6px" },
@@ -373,52 +429,52 @@ const s = {
   logoutBtn:     { backgroundColor: "transparent", color: "#fff", border: "1px solid #fff", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontSize: "13px" },
   body:          { padding: "28px 32px" },
   headerRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" },
-  heading:       { margin: 0, fontSize: "24px", fontWeight: "700", color: "#1a1a1a" },
-  subheading:    { margin: "4px 0 0", color: "#666", fontSize: "13px" },
-  refreshBtn:    { padding: "8px 16px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fff", cursor: "pointer", fontSize: "13px" },
+  heading:       { margin: 0, fontSize: "24px", fontWeight: "700", color: "var(--text-main)" },
+  subheading:    { margin: "4px 0 0", color: "var(--text-muted)", fontSize: "13px" },
+  refreshBtn:    { padding: "8px 16px", border: "1px solid var(--border-ui)", borderRadius: "8px", backgroundColor: "var(--bg-card)", color: "var(--text-main)", cursor: "pointer", fontSize: "13px" },
   statsRow:      { display: "flex", gap: "16px", marginBottom: "24px" },
-  statCard:      { flex: 1, backgroundColor: "#fff", borderRadius: "12px", padding: "20px", display: "flex", alignItems: "center", gap: "16px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
+  statCard:      { flex: 1, backgroundColor: "var(--bg-card)", borderRadius: "12px", padding: "20px", display: "flex", alignItems: "center", gap: "16px", boxShadow: "0 1px 4px var(--shadow-ui)", transition: "all 0.3s ease" },
   statIcon:      { width: "48px", height: "48px", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px" },
-  statValue:     { fontSize: "28px", fontWeight: "700", color: "#1a1a1a" },
-  statLabel:     { fontSize: "12px", color: "#888" },
+  statValue:     { fontSize: "28px", fontWeight: "700", color: "var(--text-main)" },
+  statLabel:     { fontSize: "12px", color: "var(--text-muted)" },
   row2:          { display: "flex", gap: "20px", marginBottom: "24px" },
-  card:          { flex: 1, backgroundColor: "#fff", borderRadius: "12px", padding: "20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
-  cardTitle:     { margin: "0 0 16px", fontSize: "15px", fontWeight: "700", color: "#1a1a1a", display: "flex", alignItems: "center", gap: "8px" },
+  card:          { flex: 1, backgroundColor: "var(--bg-card)", borderRadius: "12px", padding: "20px", boxShadow: "0 1px 4px var(--shadow-ui)", transition: "all 0.3s ease" },
+  cardTitle:     { margin: "0 0 16px", fontSize: "15px", fontWeight: "700", color: "var(--text-main)" },
   emptyText:     { color: "#aaa", fontSize: "13px", textAlign: "center", padding: "20px 0" },
-  whRow:         { display: "flex", justifyContent: "space-between" },
+  whRow:         { display: "flex", justifyContent: "space-between", color: "var(--text-main)" },
   whName:        { fontWeight: "600", fontSize: "14px" },
-  whDispatch:    { fontSize: "12px", color: "#888" },
-  progressBg:    { backgroundColor: "#eee", borderRadius: "4px", height: "6px", margin: "6px 0 2px" },
+  whDispatch:    { fontSize: "12px", color: "var(--text-muted)" },
+  progressBg:    { backgroundColor: "var(--border-table)", borderRadius: "4px", height: "6px", margin: "6px 0 2px" },
   progressFill:  { backgroundColor: "#27AE60", height: "6px", borderRadius: "4px" },
-  whPct:         { fontSize: "12px", color: "#888", textAlign: "right" },
+  whPct:         { fontSize: "12px", color: "var(--text-muted)", textAlign: "right" },
   whStock:       { fontSize: "12px", color: "#aaa" },
   table:         { width: "100%", borderCollapse: "collapse" },
-  th:            { textAlign: "left", fontSize: "11px", color: "#999", fontWeight: "600", padding: "6px 8px", borderBottom: "1px solid #eee" },
-  td:            { fontSize: "13px", padding: "10px 8px", borderBottom: "1px solid #f5f5f5", color: "#333" },
+  th:            { textAlign: "left", fontSize: "11px", color: "var(--text-muted)", fontWeight: "600", padding: "6px 8px", borderBottom: "1px solid var(--border-table)", backgroundColor: "var(--bg-table-th)" },
+  td:            { fontSize: "13px", padding: "10px 8px", borderBottom: "1px solid var(--border-table)", color: "var(--text-main)" },
   badgeAdmin:    { backgroundColor: "#f0eaff", color: "#8E44AD", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   badgeGreen:    { backgroundColor: "#e8f8ef", color: "#27AE60", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   badgeYellow:   { backgroundColor: "#fef9e7", color: "#F39C12", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
-  badgeRed:      { backgroundColor: "#fdecea", color: "#C0392B", padding: "2px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   badgeRejected: { backgroundColor: "#fdecea", color: "#E74C3C", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   badgePurple:   { backgroundColor: "#f0eaff", color: "#8E44AD", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   badgeBlue:     { backgroundColor: "#eef2ff", color: "#3B5BDB", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: "600" },
   categoryBadge: { backgroundColor: "#eef2ff", color: "#3B5BDB", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "600" },
-  pendingCard:   { backgroundColor: "#fef9e7", borderRadius: "8px", padding: "14px 16px", display: "flex", justifyContent: "space-between", marginBottom: "10px" },
+  pendingCard:   { backgroundColor: "var(--bg-table-stripe)", borderRadius: "8px", padding: "14px 16px", display: "flex", justifyContent: "space-between", marginBottom: "10px", color: "var(--text-main)" },
   pendingTitle:  { fontWeight: "600", fontSize: "14px" },
-  pendingSub:    { fontSize: "12px", color: "#888", marginTop: "2px" },
+  pendingSub:    { fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" },
   pendingDays:   { color: "#E67E22", fontWeight: "600", fontSize: "13px" },
   pendingDate:   { color: "#aaa", fontSize: "12px" },
   tabRow:        { display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" },
   tabActive:     { padding: "6px 14px", backgroundColor: "#C0392B", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600" },
-  tabInactive:   { padding: "6px 14px", backgroundColor: "#f5f5f5", color: "#333", border: "1px solid #ddd", borderRadius: "6px", cursor: "pointer", fontSize: "13px" },
-  uploadCard:    { backgroundColor: "#fff", borderRadius: "12px", padding: "24px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" },
-  uploadSub:     { color: "#888", fontSize: "13px", marginBottom: "16px" },
-  dropzone:      { border: "2px dashed #ddd", borderRadius: "10px", padding: "40px", textAlign: "center", cursor: "pointer" },
+  tabInactive:   { padding: "6px 14px", backgroundColor: "var(--bg-table-stripe)", color: "var(--text-main)", border: "1px solid var(--border-ui)", borderRadius: "6px", cursor: "pointer", fontSize: "13px" },
+  uploadCard:    { backgroundColor: "var(--bg-card)", borderRadius: "12px", padding: "24px", boxShadow: "0 1px 4px var(--shadow-ui)", transition: "all 0.3s ease" },
+  uploadSub:     { color: "var(--text-muted)", fontSize: "13px", marginBottom: "16px" },
+  dropzone:      { border: "2px dashed var(--border-ui)", borderRadius: "10px", padding: "40px", textAlign: "center", cursor: "pointer" },
   dropIcon:      { fontSize: "32px", marginBottom: "8px" },
-  dropText:      { fontWeight: "600", fontSize: "14px", color: "#444" },
-  dropMax:       { color: "#aaa", fontSize: "12px", marginTop: "4px" },
+  dropText:      { fontWeight: "600", fontSize: "14px", color: "var(--text-main)" },
+  dropMax:       { color: "var(--text-muted)", fontSize: "12px", marginTop: "4px" },
   approveBtn:    { padding: "4px 10px", backgroundColor: "#e8f8ef", color: "#27AE60", border: "1px solid #27AE60", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" },
   rejectBtn:     { padding: "4px 10px", backgroundColor: "#fdecea", color: "#E74C3C", border: "1px solid #E74C3C", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" },
+  themeBtn:      { padding: "6px 14px", backgroundColor: "rgba(255, 255, 255, 0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600", marginLeft: "10px" },
 };
 
 export default Dashboard;

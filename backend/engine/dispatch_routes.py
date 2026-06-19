@@ -1,12 +1,13 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, validator
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from datetime import datetime, date
 from typing import Optional
 from enum import Enum
 import logging
 
-from models.database import SessionLocal
-from models.models import Inventory, Warehouse, Order
+from models.database import SessionLocal, get_db
+from sqlalchemy.orm import Session
+from models.models import Inventory, Warehouse, Order, VipPendingDispatch
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -16,26 +17,6 @@ logger = logging.getLogger(__name__)
 class DispatchStatus(str, Enum):
     APPROVED = "APPROVED"
     PENDING = "PENDING"
-
-
-# ── Input Models ──
-class OrderRequest(BaseModel):
-    customer_name: str
-    product_id: int
-    quantity: int
-    is_vip: bool = False
-
-    @validator("quantity")
-    def quantity_must_be_positive(cls, v):
-        if v <= 0:
-            raise ValueError("Quantity must be greater than 0")
-        return v
-
-    @validator("customer_name")
-    def name_must_not_be_empty(cls, v):
-        if not v.strip():
-            raise ValueError("Customer name cannot be empty")
-        return v
 
 
 # ── Response Model ──
@@ -86,7 +67,7 @@ def select_warehouse(
     """
     Select warehouse based on stock and dispatch capacity.
     Both VIP and regular get warehouse with most remaining capacity.
-    VIP customers get additional benefits like express dispatch.
+    VIP customers get additional benefits like express dispatch prioritization.
     """
     eligible = [
         w for w in warehouses
@@ -96,6 +77,11 @@ def select_warehouse(
     ]
     if not eligible:
         return None
+    
+    # Priority sorting layer: If VIP order, prioritize warehouses with higher availability margins
+    if is_vip:
+        return max(eligible, key=lambda w: w["available_quantity"])
+        
     return max(
         eligible,
         key=lambda w: w["dispatch_limit"] - w["dispatched_today"]
@@ -153,67 +139,62 @@ def update_inventory_after_dispatch(
         db.close()
 
 
-# ── 6. Update Order Status After Dispatch ──
-def update_order_status(
-    product_id: int,
-    quantity: int,
-    warehouse_id: int,
-    customer_name: str
-):
-    """Update the most recent matching pending order to approved"""
-    db = SessionLocal()
-    try:
-        order = db.query(Order).filter(
-            Order.product_id == product_id,
-            Order.quantity == quantity,
-            Order.customer_name == customer_name,
-            Order.status == "pending"
-        ).order_by(Order.id.desc()).first()
+# ========================================================
+# ── Main Manual Dispatch Endpoint (UPDATED FOR ADMIN) ──
+# ========================================================
+@router.post("/api/dispatch/{order_id}", response_model=DispatchResponse)
+def dispatch_order(order_id: int, db: Session = Depends(get_db)) -> DispatchResponse:
+    """
+    MODIFIED: Invoked explicitly from the admin panel dashboard.
+    Fetches the existing pending database order row by ID, executes
+    the allocation routing framework, and locks inventory records.
+    """
+    # 1. Fetch the exact targets order from the active row instance database
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Target order context code record #{order_id} not found"
+        )
 
-        if order:
-            order.status = "approved"
-            order.warehouse_id = warehouse_id
-            order.estimated_dispatch_date = date.today()
-            db.commit()
-    finally:
-        db.close()
+    if order.status == "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order #{order_id} is already processed and dispatched"
+        )
 
-
-# ── Main Dispatch Endpoint ──
-@router.post("/api/dispatch", response_model=DispatchResponse)
-def dispatch_order(order: OrderRequest) -> DispatchResponse:
+    # 2. Extract operational parameters from the found order
     warehouses = get_warehouses(order.product_id)
-
     if not warehouses:
         raise HTTPException(
             status_code=404,
-            detail="Product not found in inventory"
+            detail="Requested product not found in active cluster inventories"
         )
 
+    # 3. Locate the ideal matching warehouse block
     best = select_warehouse(warehouses, order.quantity, order.is_vip)
 
     if best and not check_dispatch_limit(best, order.quantity):
         best = None
 
     if best:
-        # Update inventory: deduct stock and increment dispatched_today
+        # Update active inventory counters
         update_inventory_after_dispatch(
             warehouse_id=best["warehouse_id"],
             product_id=order.product_id,
             quantity=order.quantity
         )
 
-        # Update order status to approved
-        update_order_status(
-            product_id=order.product_id,
-            quantity=order.quantity,
-            warehouse_id=best["warehouse_id"],
-            customer_name=order.customer_name
-        )
+        # Update order tracker status values to approved state
+        order.status = "approved"
+        order.warehouse_id = best["warehouse_id"]
+        order.estimated_dispatch_date = date.today()
+        db.commit()
 
         logger.info(
-            "Order approved",
+            "Admin Order Approved Manual Execution Complete",
             extra={
+                "order_id": order.id,
                 "product_id": order.product_id,
                 "warehouse_id": best["warehouse_id"],
                 "customer": order.customer_name,
@@ -232,17 +213,94 @@ def dispatch_order(order: OrderRequest) -> DispatchResponse:
             estimated_dispatch_date=datetime.today().strftime("%Y-%m-%d")
         )
 
-    restock = get_restock_info(warehouses)
+    # Fallback backorder scheduling logic if limits or stock thresholds are hit
+   # ── VIP Multi-Day Partial Dispatch Logic ──
+    if order.is_vip:
+        # Find the warehouse with the most stock for this product, regardless of dispatch limit
+        candidates = [w for w in warehouses if w["available_quantity"] > 0]
+        if candidates:
+            target = max(candidates, key=lambda w: w["available_quantity"])
+            remaining_capacity = max(target["dispatch_limit"] - target["dispatched_today"], 0)
+            dispatch_now = min(remaining_capacity, order.quantity, target["available_quantity"])
 
+            if dispatch_now > 0:
+                update_inventory_after_dispatch(
+                    warehouse_id=target["warehouse_id"],
+                    product_id=order.product_id,
+                    quantity=dispatch_now
+                )
+
+            remaining_after = order.quantity - dispatch_now
+
+            if remaining_after <= 0:
+                order.status = "approved"
+                order.warehouse_id = target["warehouse_id"]
+                order.estimated_dispatch_date = date.today()
+                db.commit()
+                return DispatchResponse(
+                    status=DispatchStatus.APPROVED,
+                    customer_name=order.customer_name,
+                    product_id=order.product_id,
+                    quantity=order.quantity,
+                    is_vip=order.is_vip,
+                    warehouse_id=target["warehouse_id"],
+                    warehouse_name=target["name"],
+                    estimated_dispatch_date=datetime.today().strftime("%Y-%m-%d")
+                )
+
+            # Partially dispatched — create tracking record for remaining quantity
+            existing_pending = db.query(VipPendingDispatch).filter(
+                VipPendingDispatch.order_id == order.id,
+                VipPendingDispatch.status == "in_progress"
+            ).first()
+
+            if existing_pending:
+                existing_pending.remaining_quantity = remaining_after
+            else:
+                pending = VipPendingDispatch(
+                    order_id=order.id,
+                    product_id=order.product_id,
+                    customer_name=order.customer_name,
+                    total_quantity=order.quantity,
+                    remaining_quantity=remaining_after,
+                    status="in_progress"
+                )
+                db.add(pending)
+
+            order.status = "pending"
+            order.warehouse_id = target["warehouse_id"]
+            db.commit()
+
+            return DispatchResponse(
+                status=DispatchStatus.PENDING,
+                customer_name=order.customer_name,
+                product_id=order.product_id,
+                quantity=order.quantity,
+                is_vip=order.is_vip,
+                warehouse_id=target["warehouse_id"],
+                message=(
+                    f"Partially dispatched {dispatch_now} units today. "
+                    f"{remaining_after} units remain — will continue on next stock update."
+                ),
+                estimated_dispatch_date=None
+            )
+
+    # Fallback backorder scheduling logic if limits or stock thresholds are hit
+    restock = get_restock_info(warehouses)
     if not restock:
         raise HTTPException(
             status_code=503,
-            detail="No warehouses available and no restock date found."
+            detail="No local warehouses available and no future restock date tracks found."
         )
 
+    order.status = "pending"
+    order.estimated_dispatch_date = datetime.strptime(restock["restock_date"], "%Y-%m-%d").date()
+    db.commit()
+
     logger.warning(
-        "Order pending",
+        "Manual allocation backordered due to resource capacity limitations",
         extra={
+            "order_id": order.id,
             "product_id": order.product_id,
             "customer": order.customer_name,
             "wait_days": restock["wait_days"]
@@ -257,8 +315,8 @@ def dispatch_order(order: OrderRequest) -> DispatchResponse:
         is_vip=order.is_vip,
         warehouse_id=None,
         message=(
-            f"Product unavailable. "
-            f"Expected dispatch after {restock['wait_days']} days."
+            f"Insufficient available capacity inside operational units. "
+            f"Expected dispatch delayed, scheduled after {restock['wait_days']} days."
         ),
         estimated_dispatch_date=restock["restock_date"]
     )
