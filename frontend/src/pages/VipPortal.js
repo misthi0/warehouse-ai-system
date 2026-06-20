@@ -59,7 +59,6 @@ function VipPortal() {
     p.product_name.toLowerCase().includes(search.toLowerCase())
   );
 
-  // UPDATED: Removed automated background dispatch. Requires Admin interaction now.
   const handleOrder = async (e) => {
     e.preventDefault();
     if (!product) return;
@@ -68,7 +67,6 @@ function VipPortal() {
     try {
       const token = localStorage.getItem("token");
 
-      // Step 1: Create VIP order entry only
       const orderRes = await fetch(`${API_BASE_URL}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -125,23 +123,24 @@ function VipPortal() {
         </div>
       </div>
 
-      <div style={s.body}>
-        <div style={s.headerRow}>
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={s.starIcon}>⭐</span>
+      {/* 🌟 Shifted the entire body content area slightly upward */}
+      <div style={{ ...s.body, paddingTop: "12px" }}>
+        {/* 🌟 Reduced the margin-bottom here to pull the cards underneath upward too */}
+        <div style={{ ...s.headerRow, marginBottom: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {/* 🌟 Scaled icon wrapper down to perfectly balance smaller typography sizing */}
+            <span style={{ ...s.starIcon, fontSize: "20px", padding: "6px" }}>⭐</span>
             <div>
-              <h2 style={s.heading}>VIP Order Portal</h2>
-              <p style={s.subheading}>
+              {/* 🌟 Title text shrunk from 24px down to a sharper 1.5rem / 20px look */}
+              <h2 style={{ ...s.heading, fontSize: "1.45rem", fontWeight: "700" }}>VIP Order Portal</h2>
+              {/* 🌟 Subheading shrunken down and margins tightened up */}
+              <p style={{ ...s.subheading, fontSize: "0.82rem", marginTop: "2px" }}>
                 As a VIP customer, your orders receive{" "}
                 <span style={{ color: "#8E44AD", fontWeight: "700" }}>highest priority</span>
                 {" "}and wait at the top of the admin queue.
               </p>
             </div>
           </div>
-        </div>
-
-        <div style={s.banner}>
-          ⚡ <strong>VIP Priority Rules:</strong> VIP orders bypass basic priority groups inside the control panel queue. Admin processing remains necessary to commit stock allocation.
         </div>
 
         <div style={s.row2}>
