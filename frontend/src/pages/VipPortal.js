@@ -2,7 +2,12 @@ import React, { useState, useEffect } from "react";
 import API_BASE_URL from "../config";
 import ImageSlider from "../components/ImageSlider";
 
-// 🕹️ CONTEXTUAL MULTI-THEME TOGGLE SYSTEM 
+const WAREHOUSE_OPTIONS = [
+  "Gummidipoondi, Chennai (ING1)",
+  "Renukoot, Varanasi (INR1)",
+  "Patalganga, Mumbai (INP1)",
+];
+
 function ThemeSwitcher() {
   const [theme, setTheme] = useState(localStorage.getItem('app-theme') || 'light');
   useEffect(() => {
@@ -24,6 +29,8 @@ function VipPortal() {
   const [products, setProducts] = useState([]);
   const [product, setProduct]   = useState(null);
   const [quantity, setQuantity] = useState(1);
+  const [warehouse, setWarehouse] = useState("");
+  const [warehouseError, setWarehouseError] = useState("");
   const [orders, setOrders]     = useState([]);
   const [result, setResult]     = useState(null);
   const [loading, setLoading]   = useState(false);
@@ -60,6 +67,13 @@ function VipPortal() {
   const handleOrder = async (e) => {
     e.preventDefault();
     if (!product) return;
+
+    if (!warehouse) {
+      setWarehouseError("Please select a warehouse before placing your order.");
+      return;
+    }
+    setWarehouseError("");
+
     setLoading(true);
     setResult(null);
     try {
@@ -71,7 +85,8 @@ function VipPortal() {
           customer_name: username,
           product_id: product.db_product_id,
           quantity: parseInt(quantity),
-          is_vip: true
+          is_vip: true,
+          requested_warehouse: warehouse
         }),
       });
       const orderData = await orderRes.json();
@@ -80,7 +95,7 @@ function VipPortal() {
         id: orderData.id,
         product: product.product_name,
         qty: quantity,
-        warehouse: "—",
+        warehouse: warehouse,
         status: "pending",
         wait: "Awaiting admin dispatch routing"
       }, ...prev]);
@@ -93,7 +108,6 @@ function VipPortal() {
 
   return (
     <div style={s.page}>
-      {/* Navbar */}
       <div style={s.navbar}>
         <div style={s.navLeft}>
           <img src="/logo-abc.png" alt="logo" style={s.navLogo} />
@@ -104,30 +118,24 @@ function VipPortal() {
         </div>
         <div style={s.navLinks}>
           <a href="/order-portal" style={s.navLink}>📦 Order Portal</a>
-          <span style={s.navActive}>⭐ VIP Portal</span>
+          <span style={s.navActive}>VIP Portal</span>
           <a href="/dashboard" style={s.navLink}>📊 Dashboard</a>
           <ThemeSwitcher />
         </div>
         <div style={s.navRight}>
           <div>
             <div style={s.navUser}>{username}</div>
-            <div style={s.adminBadge}>Admin</div>
+            <div style={s.adminBadge}>VIP Customer</div>
           </div>
           <button onClick={handleLogout} style={s.logoutBtn}>→ Logout</button>
         </div>
       </div>
 
-      {/* 🌟 Shifted the entire body content area slightly upward */}
       <div style={{ ...s.body, paddingTop: "12px" }}>
-        {/* 🌟 Reduced the margin-bottom here to pull the cards underneath upward too */}
         <div style={{ ...s.headerRow, marginBottom: "12px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            {/* 🌟 Scaled icon wrapper down to perfectly balance smaller typography sizing */}
-            <span style={{ ...s.starIcon, fontSize: "20px", padding: "6px" }}>⭐</span>
             <div>
-              {/* 🌟 Title text shrunk from 24px down to a sharper 1.5rem / 20px look */}
               <h2 style={{ ...s.heading, fontSize: "1.45rem", fontWeight: "700" }}>VIP Order Portal</h2>
-              {/* 🌟 Subheading shrunken down and margins tightened up */}
               <p style={{ ...s.subheading, fontSize: "0.82rem", marginTop: "2px" }}>
                 As a VIP customer, your orders receive{" "}
                 <span style={{ color: "#8E44AD", fontWeight: "700" }}>highest priority</span>
@@ -168,8 +176,20 @@ function VipPortal() {
               onChange={(e) => setQuantity(e.target.value)}
               style={s.input}
             />
+
+            <label style={s.label}>Select Warehouse</label>
+            <select
+              value={warehouse}
+              onChange={(e) => { setWarehouse(e.target.value); setWarehouseError(""); }}
+              style={{ ...s.select, borderColor: warehouseError ? "#E74C3C" : "var(--border-ui)" }}
+            >
+              <option value="">-- Choose a warehouse --</option>
+              {WAREHOUSE_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+            {warehouseError && <p style={s.warehouseError}>{warehouseError}</p>}
+
             <button onClick={handleOrder} style={s.vipBtn} disabled={loading}>
-              {loading ? "Processing..." : "⭐ Place VIP Order"}
+              {loading ? "Processing..." : "Place VIP Order"}
             </button>
             {result && (
               <div style={s.resultCard}>
@@ -248,6 +268,7 @@ const s = {
   searchInput: { width: "100%", padding: "10px 10px 10px 32px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", boxSizing: "border-box" },
   select:      { width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", marginBottom: "16px", boxSizing: "border-box" },
   input:       { width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", marginBottom: "16px", boxSizing: "border-box" },
+  warehouseError: { color: "#E74C3C", fontSize: "12px", margin: "-10px 0 14px" },
   vipBtn:      { width: "100%", padding: "13px", backgroundColor: "#8E44AD", color: "#fff", border: "none", borderRadius: "8px", fontSize: "15px", fontWeight: "600", cursor: "pointer" },
   resultCard:  { marginTop: "16px", backgroundColor: "var(--bg-app)", border: "1px solid var(--border-ui)", borderRadius: "10px", padding: "16px" },
   resultTitle: { fontWeight: "700", fontSize: "15px", color: "var(--text-main)", marginBottom: "4px" },

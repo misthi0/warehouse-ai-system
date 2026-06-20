@@ -4,6 +4,12 @@ import BackgroundSlider from "../components/BackgroundSlider";
 // Double-check your terminal to ensure FastAPI is running on port 8000!
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
+const WAREHOUSE_OPTIONS = [
+  "Gummidipoondi, Chennai (ING1)",
+  "Renukoot, Varanasi (INR1)",
+  "Patalganga, Mumbai (INP1)",
+];
+
 // 🕹️ IMMEDATELY ACCESSIBLE MULTI-THEME TOGGLE SYSTEM 
 function ThemeSwitcher() {
   const [theme, setTheme] = useState(localStorage.getItem('app-theme') || 'light');
@@ -35,6 +41,18 @@ function Dashboard() {
   const [orderRequests, setOrderRequests] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
+  const [reassigningOrderId, setReassigningOrderId] = useState(null);
+  const [selectedNewWarehouse, setSelectedNewWarehouse] = useState("");
+
+  // 🚚 Dispatch modal state
+  const [dispatchModalOrderId, setDispatchModalOrderId] = useState(null);
+  const [driverName, setDriverName] = useState("");
+  const [driverNumber, setDriverNumber] = useState("");
+  const [expectedDeliveryDate, setExpectedDeliveryDate] = useState("");
+  const [invoiceDate, setInvoiceDate] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [dispatchSubmitting, setDispatchSubmitting] = useState(false);
+
   const username = localStorage.getItem("username") || "admin";
 
   const fetchAll = useCallback(async () => {
@@ -172,6 +190,111 @@ function Dashboard() {
     }
   };
 
+  // 🏭 Accept the customer's requested warehouse as-is
+  const handleAcceptWarehouse = async (orderId) => {
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` };
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/orders/${orderId}/warehouse-decision`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ decision: "accept" })
+      });
+      if (res.ok) {
+        await fetchAll();
+      } else {
+        const errorData = await res.json();
+        alert(`Warehouse Accept Error: ${errorData.detail || "Could not accept warehouse"}`);
+      }
+    } catch {
+      console.log("Warehouse accept request failed");
+    }
+  };
+
+  // 🔁 Open the reassignment picker for a specific order
+  const handleStartReassign = (orderId) => {
+    setReassigningOrderId(orderId);
+    setSelectedNewWarehouse("");
+  };
+
+  const handleCancelReassign = () => {
+    setReassigningOrderId(null);
+    setSelectedNewWarehouse("");
+  };
+
+  // 🔁 Confirm deny + reassign — auto-approves with the new warehouse
+  const handleConfirmReassign = async (orderId) => {
+    if (!selectedNewWarehouse) {
+      alert("Please select a new warehouse before confirming.");
+      return;
+    }
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` };
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/orders/${orderId}/warehouse-decision`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ decision: "deny", new_warehouse: selectedNewWarehouse })
+      });
+      if (res.ok) {
+        setReassigningOrderId(null);
+        setSelectedNewWarehouse("");
+        await fetchAll();
+      } else {
+        const errorData = await res.json();
+        alert(`Reassignment Error: ${errorData.detail || "Could not reassign warehouse"}`);
+      }
+    } catch {
+      console.log("Warehouse reassignment request failed");
+    }
+  };
+
+  // 🚚 Open the dispatch details modal for a specific order
+  const handleOpenDispatchModal = (orderId) => {
+    setDispatchModalOrderId(orderId);
+    setDriverName("");
+    setDriverNumber("");
+    setExpectedDeliveryDate("");
+    setInvoiceDate("");
+    setInvoiceNumber("");
+  };
+
+  const handleCloseDispatchModal = () => {
+    setDispatchModalOrderId(null);
+  };
+
+  // 🚚 Submit dispatch details — marks order dispatched and sends customer email
+  const handleSubmitDispatch = async () => {
+    if (!driverName || !driverNumber || !expectedDeliveryDate || !invoiceDate || !invoiceNumber) {
+      alert("Please fill in all fields before submitting.");
+      return;
+    }
+    setDispatchSubmitting(true);
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${localStorage.getItem("token")}` };
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/orders/${dispatchModalOrderId}/dispatch-details`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          driver_name: driverName,
+          driver_number: driverNumber,
+          expected_delivery_date: expectedDeliveryDate,
+          invoice_date: invoiceDate,
+          invoice_number: invoiceNumber,
+        })
+      });
+      if (res.ok) {
+        setDispatchModalOrderId(null);
+        await fetchAll();
+      } else {
+        const errorData = await res.json();
+        alert(`Dispatch Error: ${errorData.detail || "Could not dispatch order"}`);
+      }
+    } catch {
+      alert("Dispatch request failed. Please try again.");
+    } finally {
+      setDispatchSubmitting(false);
+    }
+  };
+
   const statCards = [
     { icon: "📦", color: "#C0392B", bg: "var(--bg-stat-box)", label: "Total Orders",     value: stats.totalOrders },
     { icon: "✅", color: "#27AE60", bg: "var(--bg-stat-box)", label: "Dispatched Today", value: stats.dispatchedToday },
@@ -267,7 +390,7 @@ function Dashboard() {
           <h3 style={s.cardTitle}>🛒 Order Approval Requests</h3>
           {orderRequests.length === 0 ? <p style={s.emptyText}>No order requests yet.</p> : (
             <table style={s.table}>
-              <thead><tr>{["ORDER","USER","PRODUCT","QTY","TYPE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <thead><tr>{["ORDER","USER","PRODUCT","QTY","TYPE","REQUESTED WAREHOUSE","DATE","STATUS","ACTION"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
               <tbody>
                 {orderRequests.map((o, i) => (
                   <tr key={i}>
@@ -276,15 +399,57 @@ function Dashboard() {
                     <td style={s.td}>{o.product}</td>
                     <td style={s.td}>{o.qty}</td>
                     <td style={s.td}><span style={o.type === "vip" ? s.badgePurple : s.badgeBlue}>{o.type?.toUpperCase()}</span></td>
-                    <td style={s.td}>{o.date}</td>
-                    <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : o.badgeYellow}>{o.status}</span></td>
                     <td style={s.td}>
-                      {o.status === "pending" ? (
+                      {reassigningOrderId === o.id ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: "200px" }}>
+                          <select
+                            value={selectedNewWarehouse}
+                            onChange={(e) => setSelectedNewWarehouse(e.target.value)}
+                            style={s.warehousePickerSelect}
+                          >
+                            <option value="">-- Pick new warehouse --</option>
+                            {WAREHOUSE_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
+                          </select>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <button onClick={() => handleConfirmReassign(o.id)} style={s.confirmBtn}>✅ Confirm</button>
+                            <button onClick={handleCancelReassign} style={s.cancelBtn}>✕ Cancel</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <div style={{ fontSize: "12px", color: "var(--text-main)", marginBottom: "4px" }}>
+                            {o.requested_warehouse || "—"}
+                          </div>
+                          {o.warehouse_status === "approved" && (
+                            <span style={s.badgeGreen}>✅ Accepted</span>
+                          )}
+                          {o.warehouse_status === "reassigned" && (
+                            <span style={s.badgeBlue}>🔁 Reassigned</span>
+                          )}
+                          {o.warehouse_status === "pending_review" && o.requested_warehouse && (
+                            <div style={{ display: "flex", gap: "6px" }}>
+                              <button onClick={() => handleAcceptWarehouse(o.id)} style={s.approveBtn}>✅ Accept</button>
+                              <button onClick={() => handleStartReassign(o.id)} style={s.rejectBtn}>🔁 Deny & Reassign</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td style={s.td}>{o.date}</td>
+                    <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : o.status === "dispatched" ? s.badgeBlue : o.badgeYellow}>{o.status}</span></td>
+                    <td style={s.td}>
+                      {o.status === "pending" && (
                         <div style={{ display: "flex", gap: "6px" }}>
                           <button onClick={() => handleOrderAction(o.id, "approved")} style={s.approveBtn}>✅ Approve</button>
                           <button onClick={() => handleOrderAction(o.id, "rejected")} style={s.rejectBtn}>❌ Reject</button>
                         </div>
-                      ) : <span style={{ color: "#aaa", fontSize: "12px" }}>Done</span>}
+                      )}
+                      {o.status === "approved" && (
+                        <button onClick={() => handleOpenDispatchModal(o.id)} style={s.dispatchBtn}>🚚 Dispatch</button>
+                      )}
+                      {(o.status === "dispatched" || o.status === "rejected") && (
+                        <span style={{ color: "#aaa", fontSize: "12px" }}>Done</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -325,7 +490,7 @@ function Dashboard() {
                       <td style={s.td}>{o.product}</td>
                       <td style={s.td}>{o.qty}</td>
                       <td style={s.td}><span style={s.badgeAdmin}>{o.type?.toUpperCase()}</span></td>
-                      <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : o.badgeYellow}>{o.status}</span></td>
+                      <td style={s.td}><span style={o.status === "approved" ? s.badgeGreen : o.status === "rejected" ? s.badgeRejected : o.status === "dispatched" ? s.badgeBlue : o.badgeYellow}>{o.status}</span></td>
                       <td style={s.td}>{o.warehouse || "—"}</td>
                     </tr>
                   ))}
@@ -412,6 +577,66 @@ function Dashboard() {
           </label>
         </div>
       </div>
+
+      {/* 🚚 Dispatch Details Modal */}
+      {dispatchModalOrderId && (
+        <div style={s.modalOverlay} onClick={handleCloseDispatchModal}>
+          <div style={s.modalCard} onClick={(e) => e.stopPropagation()}>
+            <h3 style={s.modalTitle}>🚚 Dispatch Order #{dispatchModalOrderId}</h3>
+            <p style={s.modalSub}>Enter dispatch details. The customer will be emailed once submitted.</p>
+
+            <label style={s.modalLabel}>Driver Name</label>
+            <input
+              type="text"
+              value={driverName}
+              onChange={(e) => setDriverName(e.target.value)}
+              style={s.modalInput}
+              placeholder="e.g. Ramesh Kumar"
+            />
+
+            <label style={s.modalLabel}>Driver Number</label>
+            <input
+              type="text"
+              value={driverNumber}
+              onChange={(e) => setDriverNumber(e.target.value)}
+              style={s.modalInput}
+              placeholder="e.g. +91 9876543210"
+            />
+
+            <label style={s.modalLabel}>Expected Delivery Date</label>
+            <input
+              type="date"
+              value={expectedDeliveryDate}
+              onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+              style={s.modalInput}
+            />
+
+            <label style={s.modalLabel}>Invoice Date</label>
+            <input
+              type="date"
+              value={invoiceDate}
+              onChange={(e) => setInvoiceDate(e.target.value)}
+              style={s.modalInput}
+            />
+
+            <label style={s.modalLabel}>Invoice Number</label>
+            <input
+              type="text"
+              value={invoiceNumber}
+              onChange={(e) => setInvoiceNumber(e.target.value)}
+              style={s.modalInput}
+              placeholder="e.g. INV-2026-0456"
+            />
+
+            <div style={s.modalActions}>
+              <button onClick={handleCloseDispatchModal} style={s.cancelBtn}>Cancel</button>
+              <button onClick={handleSubmitDispatch} style={s.dispatchBtn} disabled={dispatchSubmitting}>
+                {dispatchSubmitting ? "Submitting..." : "✅ Submit & Notify Customer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -477,7 +702,18 @@ const s = {
   dropMax:       { color: "var(--text-muted)", fontSize: "12px", marginTop: "4px" },
   approveBtn:    { padding: "4px 10px", backgroundColor: "#e8f8ef", color: "#27AE60", border: "1px solid #27AE60", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" },
   rejectBtn:     { padding: "4px 10px", backgroundColor: "#fdecea", color: "#E74C3C", border: "1px solid #E74C3C", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" },
+  dispatchBtn:   { padding: "4px 10px", backgroundColor: "#eef2ff", color: "#3B5BDB", border: "1px solid #3B5BDB", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" },
   themeBtn:      { padding: "6px 14px", backgroundColor: "rgba(255, 255, 255, 0.15)", color: "#fff", border: "1px solid rgba(255,255,255,0.3)", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600", marginLeft: "10px" },
+  warehousePickerSelect: { padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "12px" },
+  confirmBtn:    { padding: "4px 10px", backgroundColor: "#eef2ff", color: "#3B5BDB", border: "1px solid #3B5BDB", borderRadius: "6px", cursor: "pointer", fontSize: "12px", fontWeight: "600" },
+  cancelBtn:     { padding: "8px 16px", backgroundColor: "var(--bg-table-stripe)", color: "var(--text-main)", border: "1px solid var(--border-ui)", borderRadius: "6px", cursor: "pointer", fontSize: "13px", fontWeight: "600" },
+  modalOverlay:  { position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  modalCard:     { backgroundColor: "var(--bg-card)", borderRadius: "14px", padding: "28px", width: "420px", maxWidth: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" },
+  modalTitle:    { margin: "0 0 6px", fontSize: "18px", fontWeight: "700", color: "var(--text-main)" },
+  modalSub:      { margin: "0 0 20px", fontSize: "13px", color: "var(--text-muted)" },
+  modalLabel:    { fontSize: "13px", fontWeight: "600", color: "var(--text-label)", marginBottom: "6px", display: "block" },
+  modalInput:    { width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", marginBottom: "14px", boxSizing: "border-box" },
+  modalActions:  { display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px" },
 };
 
 export default Dashboard;

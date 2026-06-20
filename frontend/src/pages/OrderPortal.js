@@ -2,6 +2,12 @@ import React, { useState, useEffect } from "react";
 import API_BASE_URL from "../config";
 import ImageSlider from "../components/ImageSlider";
 
+const WAREHOUSE_OPTIONS = [
+  "Gummidipoondi, Chennai (ING1)",
+  "Renukoot, Varanasi (INR1)",
+  "Patalganga, Mumbai (INP1)",
+];
+
 // 🕹️ CONTEXTUAL MULTI-THEME TOGGLE SYSTEM 
 function ThemeSwitcher() {
   const [theme, setTheme] = useState(localStorage.getItem('app-theme') || 'light');
@@ -27,6 +33,8 @@ function OrderPortal() {
   const [products, setProducts] = useState([]);
   const [product, setProduct]   = useState(null);
   const [quantity, setQuantity] = useState(1);
+  const [warehouse, setWarehouse] = useState("");
+  const [warehouseError, setWarehouseError] = useState("");
   const [orders, setOrders]     = useState([]);
   const [result, setResult]     = useState(null);
   const [loading, setLoading]   = useState(false);
@@ -63,6 +71,13 @@ function OrderPortal() {
   const handleOrder = async (e) => {
     e.preventDefault();
     if (!product) return;
+
+    if (!warehouse) {
+      setWarehouseError("Please select a warehouse before placing your order.");
+      return;
+    }
+    setWarehouseError("");
+
     setLoading(true);
     setResult(null);
     try {
@@ -75,7 +90,8 @@ function OrderPortal() {
           customer_name: username,
           product_id: product.db_product_id,
           quantity: parseInt(quantity),
-          is_vip: false
+          is_vip: false,
+          requested_warehouse: warehouse
         }),
       });
       const orderData = await orderRes.json();
@@ -86,7 +102,7 @@ function OrderPortal() {
         id: orderData.id,
         product: product.product_name,
         qty: quantity,
-        warehouse: "—",
+        warehouse: warehouse,
         status: "pending",
         info: "Awaiting admin approval"
       }, ...prev]);
@@ -110,26 +126,22 @@ function OrderPortal() {
         </div>
         <div style={s.navLinks}>
           <span style={s.navActive}>📦 Order Portal</span>
-          <a href="/vip-portal"  style={s.navLink}>⭐ VIP Portal</a>
+          <a href="/vip-portal"  style={s.navLink}>VIP Portal</a>
           <a href="/dashboard"   style={s.navLink}>📊 Dashboard</a>
           <ThemeSwitcher />
         </div>
         <div style={s.navRight}>
           <div>
             <div style={s.navUser}>{username}</div>
-            <div style={s.adminBadge}>Admin</div>
+            <div style={s.adminBadge}>Customer</div>
           </div>
           <button onClick={handleLogout} style={s.logoutBtn}>→ Logout</button>
         </div>
       </div>
 
-      {/* 🌟 Shifted entire content container upward */}
       <div style={{ ...s.body, paddingTop: "12px" }}>
-        {/* 🌟 Wrapped text headers inside a compact row layout matching the VIP portal format */}
         <div style={{ marginBottom: "12px" }}>
-          {/* 🌟 Title text shrunk from 24px down to 1.45rem */}
           <h2 style={{ ...s.heading, fontSize: "1.45rem", fontWeight: "700" }}>Order Portal</h2>
-          {/* 🌟 Subheading spacing tightened and text resized down to 0.82rem */}
           <p style={{ ...s.subheading, fontSize: "0.82rem", margin: "2px 0 0" }}>
             Place orders. Approval required from the Dashboard.
           </p>
@@ -150,6 +162,17 @@ function OrderPortal() {
 
             <label style={s.label}>Quantity</label>
             <input type="number" value={quantity} min="1" onChange={(e) => setQuantity(e.target.value)} style={s.input} />
+
+            <label style={s.label}>Select Warehouse</label>
+            <select
+              value={warehouse}
+              onChange={(e) => { setWarehouse(e.target.value); setWarehouseError(""); }}
+              style={{ ...s.select, borderColor: warehouseError ? "#E74C3C" : "var(--border-ui)" }}
+            >
+              <option value="">-- Choose a warehouse --</option>
+              {WAREHOUSE_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
+            </select>
+            {warehouseError && <p style={s.warehouseError}>{warehouseError}</p>}
 
             <button onClick={handleOrder} style={s.orderBtn} disabled={loading}>{loading ? "Processing..." : "Place Order"}</button>
 
@@ -217,6 +240,7 @@ const s = {
   searchInput:  { width: "100%", padding: "10px 10px 10px 32px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", boxSizing: "border-box" },
   select:       { width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", marginBottom: "16px", boxSizing: "border-box" },
   input:        { width: "100%", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--border-ui)", backgroundColor: "var(--bg-app)", color: "var(--text-main)", fontSize: "13px", marginBottom: "16px", boxSizing: "border-box" },
+  warehouseError: { color: "#E74C3C", fontSize: "12px", margin: "-10px 0 14px" },
   orderBtn:     { width: "100%", padding: "13px", backgroundColor: "#2E86C1", color: "#fff", border: "none", borderRadius: "8px", fontSize: "15px", fontWeight: "600", cursor: "pointer" },
   resultCard:   { marginTop: "16px", backgroundColor: "var(--bg-app)", border: "1px solid var(--border-ui)", borderRadius: "10px", padding: "16px" },
   resultTitle:  { fontWeight: "700", fontSize: "15px", color: "var(--text-main)", marginBottom: "4px" },
