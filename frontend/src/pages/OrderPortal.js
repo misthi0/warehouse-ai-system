@@ -59,7 +59,6 @@ function OrderPortal() {
     p.product_name.toLowerCase().includes(search.toLowerCase())
   );
 
-  // UPDATED: Removed automatic dispatch call. Now only creates order.
   const handleOrder = async (e) => {
     e.preventDefault();
     if (!product) return;
@@ -68,7 +67,6 @@ function OrderPortal() {
     try {
       const token = localStorage.getItem("token");
 
-      // Step 1: Create order only
       const orderRes = await fetch(`${API_BASE_URL}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -124,9 +122,17 @@ function OrderPortal() {
         </div>
       </div>
 
-      <div style={s.body}>
-        <h2 style={s.heading}>Order Portal</h2>
-        <p style={s.subheading}>Place orders. Approval required from the Dashboard.</p>
+      {/* 🌟 Shifted entire content container upward */}
+      <div style={{ ...s.body, paddingTop: "12px" }}>
+        {/* 🌟 Wrapped text headers inside a compact row layout matching the VIP portal format */}
+        <div style={{ marginBottom: "12px" }}>
+          {/* 🌟 Title text shrunk from 24px down to 1.45rem */}
+          <h2 style={{ ...s.heading, fontSize: "1.45rem", fontWeight: "700" }}>Order Portal</h2>
+          {/* 🌟 Subheading spacing tightened and text resized down to 0.82rem */}
+          <p style={{ ...s.subheading, fontSize: "0.82rem", margin: "2px 0 0" }}>
+            Place orders. Approval required from the Dashboard.
+          </p>
+        </div>
 
         <div style={s.row2}>
           <div style={s.card}>
