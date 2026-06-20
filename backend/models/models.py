@@ -3,15 +3,16 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
 
+
 class Warehouse(Base):
     __tablename__ = "warehouses"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     location = Column(String(200))
     created_at = Column(DateTime, default=func.now())
-    
     inventory = relationship("Inventory", back_populates="warehouse")
     orders = relationship("Order", back_populates="warehouse")
+
 
 class Product(Base):
     __tablename__ = "products"
@@ -20,9 +21,9 @@ class Product(Base):
     description = Column(Text)
     unit_price = Column(DECIMAL(10, 2))
     created_at = Column(DateTime, default=func.now())
-    
     inventory = relationship("Inventory", back_populates="product")
     orders = relationship("Order", back_populates="product")
+
 
 class Inventory(Base):
     __tablename__ = "inventory"
@@ -35,9 +36,9 @@ class Inventory(Base):
     dispatched_today = Column(Integer, default=0)
     units_to_produce = Column(Integer, default=0)
     restock_date = Column(Date)
-    
     warehouse = relationship("Warehouse", back_populates="inventory")
     product = relationship("Product", back_populates="inventory")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -46,9 +47,10 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     email = Column(String(100), unique=True, nullable=True)
     role = Column(String(20), default="user")
-    status = Column(String(20), default="pending")  
-    mobile = Column(String(15), nullable=True)       
+    status = Column(String(20), default="pending")
+    mobile = Column(String(15), nullable=True)
     created_at = Column(DateTime, default=func.now())
+
 
 class Order(Base):
     __tablename__ = "orders"
@@ -59,19 +61,22 @@ class Order(Base):
     is_vip = Column(Boolean, default=False)
     status = Column(String(50), default="pending")
     warehouse_id = Column(Integer, ForeignKey("warehouses.id"))
+    requested_warehouse = Column(String(100), nullable=True)
+    warehouse_status = Column(String(20), default="pending_review")
     estimated_dispatch_date = Column(Date)
     created_at = Column(DateTime, default=func.now())
-    
     product = relationship("Product", back_populates="orders")
     warehouse = relationship("Warehouse", back_populates="orders")
+
 
 class VIPBacklog(Base):
     __tablename__ = "vip_backlog"
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    remaining_quantity = Column(Integer, nullable=False)  
-    status = Column(String(50), default="pending")        
+    remaining_quantity = Column(Integer, nullable=False)
+    status = Column(String(50), default="pending")
+
 
 # Core structural alias needed by the background dispatch processing engines
 VipPendingDispatch = VIPBacklog

@@ -20,6 +20,13 @@ ALGORITHM = "HS256"
 otp_storage = {}          
 email_otp_storage = {}    
 
+# 🏭 Valid warehouse options customers can select from
+VALID_WAREHOUSES = [
+    "Gummidipoondi, Chennai (ING1)",
+    "Renukoot, Varanasi (INR1)",
+    "Patalganga, Mumbai (INP1)",
+]
+
 
 # ==========================
 # Pydantic Schemas
@@ -29,6 +36,7 @@ class OrderCreate(BaseModel):
     product_id: int
     quantity: int
     is_vip: bool = False
+    requested_warehouse: str
 
 
 class OrderResponse(BaseModel):
@@ -39,10 +47,25 @@ class OrderResponse(BaseModel):
     is_vip: bool
     status: str
     warehouse_id: int | None = None
+    requested_warehouse: str | None = None
+    warehouse_status: str | None = None
     estimated_dispatch_date: date | None = None
 
     class Config:
         from_attributes = True
+
+
+class WarehouseDecisionRequest(BaseModel):
+    decision: str  # "accept" or "deny"
+    new_warehouse: str | None = None  # required if decision == "deny"
+
+
+class DispatchDetailsRequest(BaseModel):
+    driver_name: str
+    driver_number: str
+    expected_delivery_date: str
+    invoice_date: str
+    invoice_number: str
 
 
 class LoginRequest(BaseModel):
@@ -98,7 +121,7 @@ def send_order_status_email(customer_username: str, order_id: int, status_text: 
 
     try:
         subject = f"📦 Order #{order_id} Update - {status_text.title()}"
-        body = f"Hello {customer_username},\n\nYour Order #{order_id} has been marked as: {status_text.upper()}.\n\nDetails: {details}\n\nThank you,\nWarehouse Management System"
+        body = f"Hello {customer_username},\n\nYour Order #{order_id} has been marked as: {status_text.upper()}.\n\nDetails: {details}\n\nThank you,\nAditya Birla Carbon"
         
         msg = MIMEText(body)
         msg["Subject"] = subject
@@ -111,6 +134,47 @@ def send_order_status_email(customer_username: str, order_id: int, status_text: 
         print(f"📩 Live Order Notification: Sent cleanly to {user_email} for Order #{order_id}")
     except Exception as mail_err:
         print(f"⚠️ Email dispatch skipped for Order #{order_id}: {mail_err}")
+
+
+# ==========================
+# Helper Function: Send Dispatch Details Email
+# ==========================
+def send_dispatch_email(customer_username: str, order_id: int, dispatch: DispatchDetailsRequest, db: Session):
+    """Sends the detailed dispatch email containing driver and invoice information."""
+    user = db.query(User).filter(User.username == customer_username).first()
+    if not user:
+        print(f"⚠️ Dispatch Email Skipped: User '{customer_username}' not found.")
+        return
+
+    user_email = getattr(user, "email", getattr(user, "email_address", None))
+    if not user_email:
+        print(f"⚠️ Dispatch Email Skipped: User '{customer_username}' has no valid email.")
+        return
+
+    try:
+        subject = f"🚚 Order #{order_id} Dispatched"
+        body = (
+            f"Hello {customer_username},\n\n"
+            f"Your Order #{order_id} has been DISPATCHED.\n\n"
+            f"Driver Name: {dispatch.driver_name}\n"
+            f"Driver Number: {dispatch.driver_number}\n"
+            f"Expected Delivery Date: {dispatch.expected_delivery_date}\n"
+            f"Invoice Date: {dispatch.invoice_date}\n"
+            f"Invoice Number: {dispatch.invoice_number}\n\n"
+            f"Thank you,\nAditya Birla Carbon"
+        )
+
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = SMTP_USER
+        msg["To"] = user_email
+
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, [user_email], msg.as_string())
+        print(f"📩 Dispatch Email Sent: {user_email} for Order #{order_id}")
+    except Exception as mail_err:
+        print(f"⚠️ Dispatch email skipped for Order #{order_id}: {mail_err}")
 
 
 # ==========================
@@ -154,7 +218,7 @@ def send_email_otp(request: SendEmailOTPRequest):
 def verify_email_otp(request: VerifyEmailOTPRequest):
     saved_otp = email_otp_storage.get(request.email)
     
-    if request.otp == "123456" or (saved_otp and saved_otp == request.otp):
+    if saved_otp and saved_otp == request.otp:
         if request.email in email_otp_storage:
             del email_otp_storage[request.email]
         return {"success": True, "message": "Email successfully verified!"}
@@ -282,7 +346,7 @@ def approve_registration(user_id: int, payload: dict = Body(None), db: Session =
     user_email = getattr(user, "email", getattr(user, "email_address", None))
     if user_email:
         try:
-            msg = MIMEText(f"Hello {user.username},\nYour warehouse manager account registration has been approved by the Admin team!")
+            msg = MIMEText(f"Hello {user.username},\nYour account registration has been approved by the Admin team!")
             msg["Subject"] = "✅ Account Approved"
             msg["From"] = SMTP_USER
             msg["To"] = user_email
@@ -348,7 +412,9 @@ def get_admin_orders(db: Session = Depends(get_db)):
                 "product": product.name if product else "Unknown",
                 "qty": o.quantity,
                 "type": "vip" if o.is_vip else "customer",
-                "status": o.status
+                "status": o.status,
+                "requested_warehouse": getattr(o, "requested_warehouse", None),
+                "warehouse_status": getattr(o, "warehouse_status", None),
             })
         return result
     except Exception:
@@ -388,6 +454,10 @@ def approve_order(order_id: int, db: Session = Depends(get_db)):
     order.status = "approved"
     order.warehouse_id = stock.warehouse_id
 
+    # Mark requested warehouse as accepted by default when approving normally
+    if getattr(order, "warehouse_status", None) == "pending_review":
+        order.warehouse_status = "approved"
+
     if order.is_vip:
         if stock.available_quantity < order.quantity:
             shortfall = order.quantity - stock.available_quantity
@@ -422,12 +492,12 @@ def approve_order(order_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     try:
-        details = "Your warehouse order has been processed cleanly and has left the facility."
-        send_order_status_email(order.customer_name, order.id, "Approved & Dispatched", details, db)
+        details = "Your order has been reviewed and confirmed by our team. It will be dispatched shortly."
+        send_order_status_email(order.customer_name, order.id, "Approved & Confirmed", details, db)
     except Exception:
         pass
 
-    return {"status": "success", "message": "✅ Order Approved and Dispatched!"}
+    return {"status": "success", "message": "✅ Order Approved and Confirmed!"}
 
 
 @router.post("/admin/orders/{order_id}/rejected")
@@ -443,6 +513,72 @@ def reject_order(order_id: int, db: Session = Depends(get_db)):
     send_order_status_email(order.customer_name, order.id, "Rejected", details, db)
     
     return {"message": "❌ Order rejected."}
+
+
+# ==========================
+# Dispatch Route (Admin enters driver/invoice details, sends Dispatched email)
+# ==========================
+@router.post("/admin/orders/{order_id}/dispatch-details")
+def dispatch_order(order_id: int, request: DispatchDetailsRequest, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.status != "approved":
+        raise HTTPException(status_code=400, detail="Order must be approved before it can be dispatched")
+
+    order.status = "dispatched"
+    db.commit()
+
+    try:
+        send_dispatch_email(order.customer_name, order.id, request, db)
+    except Exception as e:
+        print(f"⚠️ Dispatch email failed: {e}")
+
+    return {"status": "success", "message": "🚚 Order marked as dispatched and email sent to customer."}
+
+
+# ==========================
+# Warehouse Decision Route (Accept / Deny + Reassign)
+# ==========================
+@router.post("/admin/orders/{order_id}/warehouse-decision")
+def decide_warehouse(order_id: int, request: WarehouseDecisionRequest, db: Session = Depends(get_db)):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if request.decision == "accept":
+        order.warehouse_status = "approved"
+        db.commit()
+        return {"status": "success", "message": "✅ Requested warehouse accepted."}
+
+    elif request.decision == "deny":
+        if not request.new_warehouse:
+            raise HTTPException(status_code=400, detail="new_warehouse is required when denying")
+        if request.new_warehouse not in VALID_WAREHOUSES:
+            raise HTTPException(status_code=400, detail="Invalid warehouse selection")
+
+        order.requested_warehouse = request.new_warehouse
+        order.warehouse_status = "reassigned"
+        db.commit()
+
+        # Decision 2 = Option A: auto-approve immediately with the new warehouse
+        result = approve_order(order_id, db)
+
+        try:
+            details = f"Your order's warehouse was updated to: {request.new_warehouse}."
+            send_order_status_email(order.customer_name, order.id, "Warehouse Reassigned & Confirmed", details, db)
+        except Exception:
+            pass
+
+        return {
+            "status": "success",
+            "message": f"🔁 Warehouse reassigned to {request.new_warehouse} and order auto-approved.",
+            "approval_result": result
+        }
+
+    else:
+        raise HTTPException(status_code=400, detail="decision must be 'accept' or 'deny'")
 
 
 # ==========================
@@ -489,12 +625,17 @@ def get_all_products(db: Session = Depends(get_db)):
 # ==========================
 @router.post("/orders", response_model=OrderResponse)
 def create_order(order: OrderCreate, db: Session = Depends(get_db)):
+    if order.requested_warehouse not in VALID_WAREHOUSES:
+        raise HTTPException(status_code=400, detail="Invalid warehouse selection")
+
     new_order = Order(
         customer_name=order.customer_name,
         product_id=order.product_id,
         quantity=order.quantity,
         is_vip=order.is_vip,
-        status="pending"
+        status="pending",
+        requested_warehouse=order.requested_warehouse,
+        warehouse_status="pending_review"
     )
     db.add(new_order)
     db.commit()
@@ -532,7 +673,6 @@ def clear_vip_backlog_after_upload(db: Session):
         if not order:
             continue
             
-        # 🌟 ROBUST FIX: Case-insensitive search containing 'Water' or 'bottle' keywords
         target_product = db.query(Product).filter(
             Product.name.contains("Water") | Product.name.contains("bottle")
         ).first()
@@ -549,7 +689,6 @@ def clear_vip_backlog_after_upload(db: Session):
             stock.dispatched_today += allocated
             entry.remaining_quantity -= allocated
             
-            # Remap entry to the newly generated product primary key ID
             entry.product_id = target_product.id
             
             if entry.remaining_quantity <= 0:
