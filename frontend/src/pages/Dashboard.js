@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import BackgroundSlider from "../components/BackgroundSlider";
 
 // Double-check your terminal to ensure FastAPI is running on port 8000!
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
@@ -184,6 +185,8 @@ function Dashboard() {
 
   return (
     <div style={s.page}>
+      <BackgroundSlider />
+
       <div style={s.navbar}>
         <div style={s.navLeft}>
           <img src="/logo-abc.png" alt="logo" style={s.navLogo} />
@@ -414,8 +417,8 @@ function Dashboard() {
 }
 
 const s = {
-  page:          { fontFamily: "Inter, sans-serif", backgroundColor: "var(--bg-app)", minHeight: "100vh", transition: "all 0.3s ease" },
-  navbar:        { backgroundColor: "#8B0000", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px" },
+  page:          { fontFamily: "Inter, sans-serif", backgroundColor: "var(--bg-app)", minHeight: "100vh", transition: "all 0.3s ease", position: "relative" },
+  navbar:        { backgroundColor: "#8B0000", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px", position: "relative", zIndex: 1 },
   navLeft:       { display: "flex", alignItems: "center", gap: "12px" },
   navLogo:       { width: "48px", height: "48px", objectFit: "contain", borderRadius: "6px" },
   navTitle:      { color: "#fff", fontWeight: "700", fontSize: "16px" },
@@ -427,7 +430,7 @@ const s = {
   navUser:       { color: "#fff", fontWeight: "600", fontSize: "14px", textAlign: "right" },
   adminBadge:    { backgroundColor: "#C0392B", color: "#fff", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", textAlign: "center" },
   logoutBtn:     { backgroundColor: "transparent", color: "#fff", border: "1px solid #fff", borderRadius: "6px", padding: "6px 14px", cursor: "pointer", fontSize: "13px" },
-  body:          { padding: "28px 32px" },
+  body:          { padding: "28px 32px", position: "relative", zIndex: 1 },
   headerRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" },
   heading:       { margin: 0, fontSize: "24px", fontWeight: "700", color: "var(--text-main)" },
   subheading:    { margin: "4px 0 0", color: "var(--text-muted)", fontSize: "13px" },

@@ -1,19 +1,17 @@
 import React, { useState, useEffect } from "react";
 import API_BASE_URL from "../config";
+import ImageSlider from "../components/ImageSlider";
 
 // 🕹️ CONTEXTUAL MULTI-THEME TOGGLE SYSTEM 
 function ThemeSwitcher() {
   const [theme, setTheme] = useState(localStorage.getItem('app-theme') || 'light');
-
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('app-theme', theme);
   }, [theme]);
-
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
-
   return (
     <button onClick={toggleTheme} style={s.themeBtn}>
       {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
@@ -66,7 +64,6 @@ function VipPortal() {
     setResult(null);
     try {
       const token = localStorage.getItem("token");
-
       const orderRes = await fetch(`${API_BASE_URL}/api/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -78,9 +75,7 @@ function VipPortal() {
         }),
       });
       const orderData = await orderRes.json();
-
       setResult({ status: "PENDING", message: "VIP Priority order logged. Awaiting manual admin release." });
-      
       setOrders(prev => [{
         id: orderData.id,
         product: product.product_name,
@@ -89,7 +84,6 @@ function VipPortal() {
         status: "pending",
         wait: "Awaiting admin dispatch routing"
       }, ...prev]);
-
     } catch (err) {
       console.error("VIP order failed:", err);
     } finally {
@@ -146,7 +140,6 @@ function VipPortal() {
         <div style={s.row2}>
           <div style={s.card}>
             <h3 style={s.cardTitle}>🛒 Place VIP Order</h3>
-
             <label style={s.label}>Search Product</label>
             <div style={s.searchWrapper}>
               <span style={s.searchIcon}>🔍</span>
@@ -158,7 +151,6 @@ function VipPortal() {
                 style={s.searchInput}
               />
             </div>
-
             <select
               value={product?.db_product_id || ""}
               onChange={(e) => setProduct(products.find(p => p.db_product_id === parseInt(e.target.value)))}
@@ -168,7 +160,6 @@ function VipPortal() {
                 <option key={p.db_product_id} value={p.db_product_id}>{p.product_name}</option>
               ))}
             </select>
-
             <label style={s.label}>Quantity</label>
             <input
               type="number"
@@ -177,11 +168,9 @@ function VipPortal() {
               onChange={(e) => setQuantity(e.target.value)}
               style={s.input}
             />
-
             <button onClick={handleOrder} style={s.vipBtn} disabled={loading}>
               {loading ? "Processing..." : "⭐ Place VIP Order"}
             </button>
-
             {result && (
               <div style={s.resultCard}>
                 <div style={s.resultTitle}>⏰ VIP Order Pending</div>
@@ -223,6 +212,8 @@ function VipPortal() {
             )}
           </div>
         </div>
+
+        <ImageSlider />
       </div>
     </div>
   );

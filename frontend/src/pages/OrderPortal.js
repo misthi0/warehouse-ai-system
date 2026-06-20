@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import API_BASE_URL from "../config";
+import ImageSlider from "../components/ImageSlider";
 
 // 🕹️ CONTEXTUAL MULTI-THEME TOGGLE SYSTEM 
 function ThemeSwitcher() {
@@ -183,6 +184,8 @@ function OrderPortal() {
             )}
           </div>
         </div>
+
+        <ImageSlider />
       </div>
     </div>
   );
