@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import API_BASE_URL from "../config";
-import ImageSlider from "../components/ImageSlider";
+import VideoImageCycle from "../components/VideoImageCycle";
+import Chatbot from "../components/Chatbot";
 
 const WAREHOUSE_OPTIONS = [
   "Gummidipoondi, Chennai (ING1)",
@@ -233,8 +234,10 @@ function VipPortal() {
           </div>
         </div>
 
-        <ImageSlider />
+        <VideoImageCycle />
       </div>
+
+      <Chatbot />
     </div>
   );
 }

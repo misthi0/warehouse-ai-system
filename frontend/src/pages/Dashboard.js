@@ -4,7 +4,7 @@ import BackgroundSlider from "../components/BackgroundSlider";
 // Double-check your terminal to ensure FastAPI is running on port 8000!
 const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
-const WAREHOUSE_OPTIONS = [
+const PLANT_OPTIONS = [
   "Gummidipoondi, Chennai (ING1)",
   "Renukoot, Varanasi (INR1)",
   "Patalganga, Mumbai (INP1)",
@@ -408,7 +408,7 @@ function Dashboard() {
                             style={s.warehousePickerSelect}
                           >
                             <option value="">-- Pick new warehouse --</option>
-                            {WAREHOUSE_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
+                            {PLANT_OPTIONS.map(w => <option key={w} value={w}>{w}</option>)}
                           </select>
                           <div style={{ display: "flex", gap: "6px" }}>
                             <button onClick={() => handleConfirmReassign(o.id)} style={s.confirmBtn}>✅ Confirm</button>

@@ -27,6 +27,9 @@ VALID_WAREHOUSES = [
     "Patalganga, Mumbai (INP1)",
 ]
 
+# 📩 Where customer complaints get forwarded
+ADMIN_COMPLAINT_EMAIL = "khushaltiwari777776@gmail.com"
+
 
 # ==========================
 # Pydantic Schemas
@@ -66,6 +69,12 @@ class DispatchDetailsRequest(BaseModel):
     expected_delivery_date: str
     invoice_date: str
     invoice_number: str
+
+
+class ComplaintRequest(BaseModel):
+    username: str
+    contact_email: str | None = ""
+    message: str
 
 
 class LoginRequest(BaseModel):
@@ -224,6 +233,40 @@ def verify_email_otp(request: VerifyEmailOTPRequest):
         return {"success": True, "message": "Email successfully verified!"}
         
     raise HTTPException(status_code=400, detail="Invalid verification code.")
+
+
+# ==========================
+# Complaint Route (Chatbot "Raise a Complaint")
+# ==========================
+@router.post("/complaint")
+def submit_complaint(request: ComplaintRequest):
+    if not request.message or not request.message.strip():
+        raise HTTPException(status_code=400, detail="Complaint message cannot be empty")
+
+    try:
+        subject = f"🚩 New Complaint from {request.username}"
+        body = (
+            f"A new complaint has been submitted via the Chatbot.\n\n"
+            f"Username: {request.username}\n"
+            f"Contact Email: {request.contact_email or 'Not provided'}\n\n"
+            f"Complaint:\n{request.message}\n\n"
+            f"— Aditya Birla Carbon Dispatch System"
+        )
+
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = SMTP_USER
+        msg["To"] = ADMIN_COMPLAINT_EMAIL
+
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, [ADMIN_COMPLAINT_EMAIL], msg.as_string())
+        print(f"📩 Complaint Email Sent to {ADMIN_COMPLAINT_EMAIL} from {request.username}")
+    except Exception as mail_err:
+        print(f"⚠️ Complaint email failed: {mail_err}")
+        raise HTTPException(status_code=500, detail="Could not send complaint email")
+
+    return {"success": True, "message": "✅ Complaint submitted successfully."}
 
 
 # ==========================
