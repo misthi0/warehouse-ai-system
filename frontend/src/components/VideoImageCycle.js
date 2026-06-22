@@ -1,25 +1,35 @@
 import React, { useState, useEffect, useRef } from "react";
 import ImageSlider from "./ImageSlider";
 
-const VIDEO_DURATION_MS = 4000;   // 4 seconds of video
-const PHOTO_DURATION_MS = 15000;  // 15 seconds of photo transitions
+const VIDEO_DURATION_MS = 4000;
+const PHOTO_DURATION_MS = 15000;
+const FADE_MS = 500;
 
 const VIDEO_SRC = "/videos/dispatch-video.MOV";
 
 function VideoImageCycle() {
   const [mode, setMode] = useState("video"); // "video" | "photo"
+  const [visible, setVisible] = useState(true);
   const videoRef = useRef(null);
 
-  // Master cycle: video -> photo -> video -> ...
   useEffect(() => {
     const duration = mode === "video" ? VIDEO_DURATION_MS : PHOTO_DURATION_MS;
-    const timer = setTimeout(() => {
+
+    const fadeOutTimer = setTimeout(() => {
+      setVisible(false);
+    }, duration - FADE_MS);
+
+    const switchTimer = setTimeout(() => {
       setMode((prev) => (prev === "video" ? "photo" : "video"));
+      setVisible(true);
     }, duration);
-    return () => clearTimeout(timer);
+
+    return () => {
+      clearTimeout(fadeOutTimer);
+      clearTimeout(switchTimer);
+    };
   }, [mode]);
 
-  // Always restart the video from the beginning when entering video mode
   useEffect(() => {
     if (mode === "video" && videoRef.current) {
       videoRef.current.currentTime = 0;
@@ -27,14 +37,21 @@ function VideoImageCycle() {
     }
   }, [mode]);
 
+  const fadeStyle = {
+    opacity: visible ? 1 : 0,
+    transition: `opacity ${FADE_MS}ms ease-in-out`,
+  };
+
   if (mode === "photo") {
-    // Exactly the original, untouched coverflow carousel
-    return <ImageSlider />;
+    return (
+      <div style={fadeStyle}>
+        <ImageSlider />
+      </div>
+    );
   }
 
-  // Video mode: separate, clean box at the video's own natural dimensions
   return (
-    <div style={styles.videoContainer}>
+    <div style={{ ...styles.videoContainer, ...fadeStyle }}>
       <video
         ref={videoRef}
         src={VIDEO_SRC}

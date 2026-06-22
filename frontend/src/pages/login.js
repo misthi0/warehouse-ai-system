@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000"; // Updated default to 8000 to match FastAPI default
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 function Login() {
   const [activeTab, setActiveTab] = useState("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [mobile, setMobile] = useState("");
-  const [email, setEmail] = useState(""); // 📩 Added email state tracking
+  const [email, setEmail] = useState("");
   const [role, setRole] = useState("customer");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -35,7 +35,7 @@ function Login() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Login failed");
-      
+
       localStorage.setItem("token", data.token);
       localStorage.setItem("role", data.user.role);
       localStorage.setItem("username", data.user.username);
@@ -47,15 +47,14 @@ function Login() {
     }
   };
 
-  // 📩 Step 1: Request Email OTP from Backend Server
   const handleSendOtp = async (e) => {
     e.preventDefault();
     setError("");
-    
+
     if (!username || !password) { setError("Please fill in username and password fields."); return; }
     if (!email || !email.includes("@")) { setError("Please enter a valid email address."); return; }
     if (!mobile || mobile.length !== 10) { setError("Please enter a valid 10-digit mobile number."); return; }
-    
+
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/send-email-otp`, {
@@ -65,7 +64,7 @@ function Login() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Failed to trigger security code.");
-      
+
       setOtpSent(true);
       alert(`📩 Security verification code triggered for ${email}!\nCheck your mailbox or look at your backend command terminal logs.`);
     } catch (err) {
@@ -75,16 +74,14 @@ function Login() {
     }
   };
 
-  // 🔑 Step 2: Verify the Code & Register Account permanently
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setError("");
-    
+
     if (enteredOtp.length !== 6) { setError("❌ Please enter the full 6-digit security code."); return; }
-    
+
     setLoading(true);
     try {
-      // 1. Verify OTP with Backend Server
       const verifyResponse = await fetch(`${API_BASE_URL}/api/auth/verify-email-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -93,34 +90,26 @@ function Login() {
       const verifyData = await verifyResponse.json();
       if (!verifyResponse.ok) throw new Error(verifyData.detail || "Invalid code verification failure.");
 
-      // 2. Code is valid! Complete registration sequence
       const registerResponse = await fetch(`${API_BASE_URL}/api/auth/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          username, 
-          password, 
-          mobile: `+91${mobile}`, 
+        body: JSON.stringify({
+          username,
+          password,
+          mobile: `+91${mobile}`,
           role,
           email: email.trim()
         }),
       });
       const registerData = await registerResponse.json();
       if (!registerResponse.ok) throw new Error(registerData.detail || "Registration failed");
-      
+
       setRegistrationSuccess(true);
     } catch (err) {
       setError(err.message || "Verification procedure failed.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleDemoLogin = (role) => {
-    localStorage.setItem("role", role);
-    localStorage.setItem("username", role);
-    localStorage.setItem("token", "demo-token");
-    redirectByRole(role);
   };
 
   const resetRegister = () => {
@@ -138,7 +127,6 @@ function Login() {
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        {/* Logo Banner */}
         <div style={styles.header}>
           <img src="/logo-abc.png" alt="Aditya Birla Carbon" style={styles.logo} />
           <div>
@@ -147,7 +135,6 @@ function Login() {
           </div>
         </div>
 
-        {/* Tab Selection Row */}
         <div style={styles.tabRow}>
           <button style={activeTab === "signin" ? styles.tabActive : styles.tabInactive}
             onClick={() => { setActiveTab("signin"); setError(""); resetRegister(); }}>
@@ -159,10 +146,8 @@ function Login() {
           </button>
         </div>
 
-        {/* Dynamic Context Error Messages */}
         {error && <div style={styles.error}>{error}</div>}
 
-        {/* SIGN IN PANELS */}
         {activeTab === "signin" && (
           <form onSubmit={handleLogin}>
             <label style={styles.label}>Username</label>
@@ -182,10 +167,8 @@ function Login() {
           </form>
         )}
 
-        {/* REGISTRATION SYSTEM PIPELINES */}
         {activeTab === "register" && (
           <>
-            {/* Stage A — Awaiting Approvals UI */}
             {registrationSuccess ? (
               <div style={styles.successCard}>
                 <div style={styles.successIcon}>⏳</div>
@@ -203,7 +186,6 @@ function Login() {
                 </button>
               </div>
             ) : !otpSent ? (
-              /* Stage B — Credentials & Email Submission Layout */
               <form onSubmit={handleSendOtp}>
                 <label style={styles.label}>Username</label>
                 <input type="text" placeholder="Enter username" value={username}
@@ -249,7 +231,6 @@ function Login() {
                 </button>
               </form>
             ) : (
-              /* Stage C — 6-Digit OTP Token Input Display */
               <form onSubmit={handleVerifyOtp}>
                 <div style={styles.otpInfoBox}>
                   <p style={styles.otpInfoText}>Verification code sent to <strong>{email}</strong></p>
@@ -259,11 +240,11 @@ function Login() {
                 <input type="tel" placeholder="000000" value={enteredOtp}
                   maxLength={6} onChange={(e) => setEnteredOtp(e.target.value.replace(/\D/g, ""))}
                   style={{ ...styles.input, letterSpacing: "8px", fontSize: "20px", textAlign: "center" }} />
-                
+
                 <button type="submit" style={styles.submitBtn} disabled={loading}>
                   {loading ? "Verifying Token..." : "Verify Code & Register"}
                 </button>
-                
+
                 <button type="button"
                   onClick={() => { setOtpSent(false); setEnteredOtp(""); setError(""); }}
                   style={styles.backBtn}>
@@ -271,18 +252,6 @@ function Login() {
                 </button>
               </form>
             )}
-          </>
-        )}
-
-        {/* Quick Demo Access Options */}
-        {!registrationSuccess && (
-          <>
-            <p style={styles.demoLabel}>Quick demo login</p>
-            <div style={styles.demoRow}>
-              <button style={styles.adminBtn} onClick={() => handleDemoLogin("admin")}>Admin</button>
-              <button style={styles.vipBtn} onClick={() => handleDemoLogin("vip")}>VIP</button>
-              <button style={styles.customerBtn} onClick={() => handleDemoLogin("customer")}>Customer</button>
-            </div>
           </>
         )}
 
@@ -330,11 +299,6 @@ const styles = {
   successSub:      { margin: "0 0 4px", color: "#555", fontSize: "13px" },
   successSub2:     { margin: "0 0 16px", color: "#888", fontSize: "12px" },
   infoBox:         { backgroundColor: "#f5f5f5", borderRadius: "8px", padding: "12px", marginBottom: "16px", textAlign: "left", fontSize: "13px", lineHeight: "2" },
-  demoLabel:       { textAlign: "center", color: "#999", fontSize: "12px", margin: "20px 0 10px" },
-  demoRow:         { display: "flex", gap: "10px", justifyContent: "center", marginBottom: "20px" },
-  adminBtn:        { padding: "8px 20px", backgroundColor: "#fde8e8", color: "#C0392B", border: "1px solid #f5c0c0", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px" },
-  vipBtn:          { padding: "8px 20px", backgroundColor: "#fef9e7", color: "#9a7d0a", border: "1px solid #f9e79f", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px" },
-  customerBtn:     { padding: "8px 20px", backgroundColor: "#f5f5f5", color: "#333", border: "1px solid #ddd", borderRadius: "20px", cursor: "pointer", fontWeight: "600", fontSize: "13px" },
   footer:          { textAlign: "center", color: "#aaa", fontSize: "11px", marginTop: "8px" },
 };
 
