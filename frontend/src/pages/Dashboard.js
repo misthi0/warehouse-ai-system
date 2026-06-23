@@ -339,7 +339,6 @@ function Dashboard() {
             <h2 style={s.heading}>Admin Dashboard</h2>
             <p style={s.subheading}>Real-time overview of all Aditya Birla Carbon warehouse operations</p>
           </div>
-          <button onClick={fetchAll} style={s.refreshBtn}>↻ Refresh</button>
         </div>
 
         {/* Stat Cards */}
@@ -659,7 +658,6 @@ const s = {
   headerRow:     { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "24px" },
   heading:       { margin: 0, fontSize: "24px", fontWeight: "700", color: "var(--text-main)" },
   subheading:    { margin: "4px 0 0", color: "var(--text-muted)", fontSize: "13px" },
-  refreshBtn:    { padding: "8px 16px", border: "1px solid var(--border-ui)", borderRadius: "8px", backgroundColor: "var(--bg-card)", color: "var(--text-main)", cursor: "pointer", fontSize: "13px" },
   statsRow:      { display: "flex", gap: "16px", marginBottom: "24px" },
   statCard:      { flex: 1, backgroundColor: "var(--bg-card)", borderRadius: "12px", padding: "20px", display: "flex", alignItems: "center", gap: "16px", boxShadow: "0 1px 4px var(--shadow-ui)", transition: "all 0.3s ease" },
   statIcon:      { width: "48px", height: "48px", borderRadius: "10px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "22px" },
